@@ -8,7 +8,7 @@ import os
 from datetime import timedelta
 
 # ==============================================================================
-# 1. ADVANCED TRADE HISTORY LOGGERS (Auto-Healing Schema)
+# 1. TRADE HISTORY LOGGERS
 # ==============================================================================
 NIFTY_HISTORY_FILE = "nifty_trade_book.csv"
 STOCK_HISTORY_FILE = "stock_trade_book.csv"
@@ -22,15 +22,13 @@ def save_trade(trade_data, is_nifty=False):
     else:
         try:
             existing = pd.read_csv(filename)
-            # अगर पुरानी फाइल है (जिसमें Time (IST) नहीं है), तो नई फाइल से रिप्लेस कर दो
             if 'Time (IST)' not in existing.columns:
                 df_new.to_csv(filename, index=False)
             else:
                 is_duplicate = ((existing['Time (IST)'] == trade_data['Time (IST)']) & (existing['Asset'] == trade_data['Asset'])).any()
                 if not is_duplicate:
                     df_new.to_csv(filename, mode='a', header=False, index=False)
-        except Exception:
-            # क्रैश होने पर भी सिस्टम रुके ना
+        except:
             df_new.to_csv(filename, index=False)
 
 def load_history(is_nifty=False):
@@ -38,30 +36,31 @@ def load_history(is_nifty=False):
     if os.path.exists(filename):
         try:
             df = pd.read_csv(filename)
-            # अगर पुरानी फाइल लोड हो रही है तो खाली टेबल दिखाओ ताकि क्रैश ना हो
-            if 'Time (IST)' not in df.columns:
-                return pd.DataFrame()
+            if 'Time (IST)' not in df.columns: return pd.DataFrame()
             return df.sort_index(ascending=False)
-        except:
-            return pd.DataFrame()
+        except: pass
     return pd.DataFrame()
 
 # ==============================================================================
-# 2. INTRADAY QUANT ENGINE
+# 2. INTRADAY QUANT ENGINE (v11.0 - ULTRA STRICT FILTERS)
 # ==============================================================================
 def calculate_intraday(df, symbol):
     if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
 
+    # Core EMAs
     df['EMA_9'] = df['Close'].ewm(span=9, adjust=False).mean()
     df['EMA_21'] = df['Close'].ewm(span=21, adjust=False).mean()
+    df['EMA_200'] = df['Close'].ewm(span=200, adjust=False).mean() # MAJOR TREND
     
     if 'Volume' in df.columns and df['Volume'].sum() > 0:
         df['Typical_Price'] = (df['High'] + df['Low'] + df['Close']) / 3
         df['Cumulative_VP'] = (df['Typical_Price'] * df['Volume']).cumsum()
         df['Cumulative_Vol'] = df['Volume'].cumsum()
         df['Baseline'] = df['Cumulative_VP'] / (df['Cumulative_Vol'] + 1e-10) 
+        df['Vol_Avg'] = df['Volume'].rolling(20).mean() # 20 Min Volume Avg
     else:
         df['Baseline'] = df['Close'].ewm(span=50, adjust=False).mean() 
+        df['Vol_Avg'] = 1
 
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
@@ -73,25 +72,38 @@ def calculate_intraday(df, symbol):
     active_trade = None
     is_nifty = "NSEI" in symbol
     
-    start_idx = 20 if len(df) > 20 else 1
+    start_idx = 200 if len(df) > 200 else 20 # Need 200 candles for EMA 200
     for i in range(start_idx, len(df)):
         score = 0
         curr_c = round(float(df['Close'].iloc[i]), 2)
         baseline_val = float(df['Baseline'].iloc[i])
+        ema200_val = float(df['EMA_200'].iloc[i])
         
         candle_time = df.index[i]
-        if candle_time.tz is None:
-            candle_time = candle_time.tz_localize('UTC')
+        if candle_time.tz is None: candle_time = candle_time.tz_localize('UTC')
         ist_time = candle_time.tz_convert('Asia/Kolkata')
         timestamp = ist_time.strftime("%d-%b %I:%M %p")
         
-        if df['EMA_9'].iloc[i] > df['EMA_21'].iloc[i] and curr_c > baseline_val:
+        # 🚀 VOLUME SURGE CHECK (Smart Money)
+        vol_surge = True
+        if 'Volume' in df.columns and df['Volume'].sum() > 0:
+            current_vol = float(df['Volume'].iloc[i])
+            avg_vol = float(df['Vol_Avg'].iloc[i])
+            vol_surge = current_vol > (1.5 * avg_vol) # Volume must be 150% of average
+        
+        # 🛡️ STRICT INSTITUTIONAL SCORING
+        # Buy Setup: Above 200 EMA + Above VWAP + 9/21 Crossover
+        if df['EMA_9'].iloc[i] > df['EMA_21'].iloc[i] and curr_c > baseline_val and curr_c > ema200_val:
             score += 40  
-            if df['RSI_14'].iloc[i] > 55: score += 45
+            if df['RSI_14'].iloc[i] >= 60: score += 25
+            if vol_surge: score += 35
             trend_dir = 1
-        elif df['EMA_9'].iloc[i] < df['EMA_21'].iloc[i] and curr_c < baseline_val:
+            
+        # Sell Setup: Below 200 EMA + Below VWAP + 9/21 Crossunder
+        elif df['EMA_9'].iloc[i] < df['EMA_21'].iloc[i] and curr_c < baseline_val and curr_c < ema200_val:
             score += 40 
-            if df['RSI_14'].iloc[i] < 45: score += 45
+            if df['RSI_14'].iloc[i] <= 40: score += 25
+            if vol_surge: score += 35
             trend_dir = -1
         else:
             score, trend_dir = 0, 0
@@ -129,7 +141,10 @@ def calculate_intraday(df, symbol):
                 save_trade(trade_data, is_nifty=is_nifty)
                 active_trade = None 
         else:
-            if score >= 85 and trend_dir != 0:
+            # Must score 100% for Stocks (Trend + RSI + Volume). Nifty can trigger at 85+.
+            trigger_score = 85 if is_nifty else 95 
+            
+            if score >= trigger_score and trend_dir != 0:
                 atm_strike = int(round(curr_c / 50) * 50)
                 
                 if trend_dir == 1:
@@ -196,7 +211,7 @@ def scan_swing_stocks(tickers):
 # ==============================================================================
 # 4. UI SETUP
 # ==============================================================================
-st.set_page_config(page_title="Scalper Pro AI v10.1", layout="wide")
+st.set_page_config(page_title="Scalper Pro AI v11.0", layout="wide")
 audio_code = """<audio id="alert-sound" autoplay><source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-500.wav" type="audio/wav"></audio>"""
 
 st.markdown("""
@@ -222,7 +237,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.markdown("<h2 style='text-align: center; font-weight: 700;'>SCALPER PRO <span style='color:#deff9a;'>AI v10.1</span></h2>", unsafe_allow_html=True)
+st.markdown("<h2 style='text-align: center; font-weight: 700;'>SCALPER PRO <span style='color:#deff9a;'>AI v11.0</span></h2>", unsafe_allow_html=True)
 st.markdown("<hr style='border-color:#1f293d;'>", unsafe_allow_html=True)
 
 tab1, tab2, tab3, tab4 = st.tabs(["⚡ NIFTY OPTIONS", "📡 INTRADAY STOCKS", "🚀 SWING TRADING", "👨‍💻 ABOUT CREATOR"])
@@ -307,6 +322,7 @@ with tab1:
 # TAB 2: INTRADAY STOCKS
 # ------------------------------------------------------------------------------
 with tab2:
+    st.write("🔥 Smart Money Filter Active: Trade tabhi milega jab Volume 150% se zyada hoga aur 200 EMA support karega.")
     stocks = ["RELIANCE.NS", "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "TATAMOTORS.NS", "INFY.NS"]
     cols = st.columns(3)
     col_idx = 0
@@ -319,6 +335,7 @@ with tab2:
                 name = stock.replace(".NS", "")
                 curr_p = round(float(s_df['Close'].iloc[-1]), 2)
                 vwap_p = round(float(s_df['Baseline'].iloc[-1]), 2)
+                ema200 = round(float(s_df['EMA_200'].iloc[-1]), 2)
                 
                 with cols[col_idx % 3]:
                     if s_trade is not None:
@@ -348,8 +365,8 @@ with tab2:
                         st.markdown(f"""
                         <div class="stock-card">
                             <h3 style="color:#f5f5f5; margin:0;">{name}</h3>
-                            <p style="margin:5px 0; color:#8b949e;">LTP: ₹{curr_p} | VWAP: ₹{vwap_p}</p>
-                            <p style="margin:10px 0 0 0; color:#ffaa00;">No clear trend. Wait ⏳</p>
+                            <p style="margin:5px 0; color:#8b949e;">LTP: ₹{curr_p} | VWAP: ₹{vwap_p} <br> 200 EMA: ₹{ema200}</p>
+                            <p style="margin:10px 0 0 0; color:#ffaa00;">Waiting for Volume Breakout ⏳</p>
                         </div>
                         """, unsafe_allow_html=True)
                 col_idx += 1

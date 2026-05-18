@@ -248,3 +248,9 @@ else:
         st.dataframe(pd.DataFrame(grid_data), use_container_width=True)
     else:
         st.info("No high-conviction (>85%) institutional breakout stocks found in the radar at this moment.")
+        # ------------------------------------------------------------------------------
+# 3. AUTO-REFRESH SYSTEM (LIVE TICK SYNC)
+# ------------------------------------------------------------------------------
+import time
+time.sleep(60)  # 60 सेकंड (1 मिनट) का वेट करेगा
+st.rerun()      # फिर बिना माउस छुए पेज को अपने आप रीफ्रेश कर देगा

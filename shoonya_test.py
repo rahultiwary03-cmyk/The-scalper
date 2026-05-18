@@ -7,39 +7,50 @@ import time
 import os
 
 # ==============================================================================
-# 1. PERMANENT TRADE HISTORY LOGGER
+# 1. DUAL TRADE HISTORY LOGGERS (निफ्टी और स्टॉक्स के लिए अलग-अलग)
 # ==============================================================================
-HISTORY_FILE = "trade_record_book.csv"
+NIFTY_HISTORY_FILE = "nifty_trade_book.csv"
+STOCK_HISTORY_FILE = "stock_trade_book.csv"
 
-def save_trade_to_csv(trade_data):
+def save_trade(trade_data, is_nifty=False):
+    filename = NIFTY_HISTORY_FILE if is_nifty else STOCK_HISTORY_FILE
     df = pd.DataFrame([trade_data])
-    if not os.path.exists(HISTORY_FILE):
-        df.to_csv(HISTORY_FILE, index=False)
+    if not os.path.exists(filename):
+        df.to_csv(filename, index=False)
     else:
-        existing = pd.read_csv(HISTORY_FILE)
+        existing = pd.read_csv(filename)
         is_duplicate = ((existing['Time'] == trade_data['Time']) & (existing['Asset'] == trade_data['Asset'])).any()
         if not is_duplicate:
-            df.to_csv(HISTORY_FILE, mode='a', header=False, index=False)
+            df.to_csv(filename, mode='a', header=False, index=False)
+
+def load_history(is_nifty=False):
+    filename = NIFTY_HISTORY_FILE if is_nifty else STOCK_HISTORY_FILE
+    if os.path.exists(filename):
+        df = pd.read_csv(filename)
+        return df.sort_index(ascending=False)
+    return pd.DataFrame()
 
 # ==============================================================================
-# 2. INSTITUTIONAL QUANT ENGINE V5.0 (VWAP + 200 EMA + SENTIMENT)
+# 2. HYPER-SENSITIVE QUANT ENGINE V6.0 (EMA 9/21 + Baseline + Supertrend)
 # ==============================================================================
-def calculate_ai_v5(df, symbol):
+def calculate_ai_v6(df, symbol):
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
 
-    # 1. Intraday VWAP (असली मार्केट सेंटिमेंट)
-    df['Typical_Price'] = (df['High'] + df['Low'] + df['Close']) / 3
-    df['VP'] = df['Typical_Price'] * df['Volume']
-    df['Cumulative_VP'] = df['VP'].cumsum()
-    df['Cumulative_Vol'] = df['Volume'].cumsum()
-    df['VWAP'] = df['Cumulative_VP'] / (df['Cumulative_Vol'] + 1e-10)
-
-    # 2. Major & Minor Trends
-    df['EMA_20'] = df['Close'].ewm(span=20, adjust=False).mean()
-    df['EMA_200'] = df['Close'].ewm(span=200, adjust=False).mean() # लॉन्ग टर्म ट्रेंड
+    # Fast Momentum EMAs for exact entry catching
+    df['EMA_9'] = df['Close'].ewm(span=9, adjust=False).mean()
+    df['EMA_21'] = df['Close'].ewm(span=21, adjust=False).mean()
     
-    # 3. RSI & ATR
+    # Baseline Sentiment (VWAP for stocks, EMA_50 for Nifty because YFinance has no Nifty volume)
+    if 'Volume' in df.columns and df['Volume'].sum() > 0:
+        df['Typical_Price'] = (df['High'] + df['Low'] + df['Close']) / 3
+        df['Cumulative_VP'] = (df['Typical_Price'] * df['Volume']).cumsum()
+        df['Cumulative_Vol'] = df['Volume'].cumsum()
+        df['Baseline'] = df['Cumulative_VP'] / (df['Cumulative_Vol'] + 1e-10) # VWAP
+    else:
+        df['Baseline'] = df['Close'].ewm(span=50, adjust=False).mean() # EMA 50 Fallback
+
+    # RSI & ATR
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -50,46 +61,54 @@ def calculate_ai_v5(df, symbol):
     tr = pd.concat([high - low, (high - close.shift(1)).abs(), (low - close.shift(1)).abs()], axis=1).max(axis=1)
     df['ATR_14'] = tr.rolling(window=14).mean()
 
+    # Supertrend (10, 3) for confirmation
+    atr_10 = tr.rolling(window=10).mean()
+    hl2 = (high + low) / 2
+    f_ub = (hl2 + (3 * atr_10)).tolist()
+    f_lb = (hl2 - (3 * atr_10)).tolist()
+    c_list = close.tolist()
+    trend = np.ones(len(df))
+    
+    for i in range(1, len(df)):
+        if not (f_ub[i] < f_ub[i-1] or c_list[i-1] > f_ub[i-1]): f_ub[i] = f_ub[i-1]
+        if not (f_lb[i] > f_lb[i-1] or c_list[i-1] < f_lb[i-1]): f_lb[i] = f_lb[i-1]
+        if trend[i-1] == 1 and c_list[i] < f_lb[i]: trend[i] = -1
+        elif trend[i-1] == -1 and c_list[i] > f_ub[i]: trend[i] = 1
+        else: trend[i] = trend[i-1]
+    df['Trend'] = trend
+
     df['AI_Score'], df['Signal'], df['Entry'], df['Target'], df['StopLoss'], df['Status'] = 0, 'WAIT ⏳', 0.0, 0.0, 0.0, ""
 
     active_trade = None
-    today_trades = []
+    is_nifty = "NSEI" in symbol
     
-    # कम से कम 200 कैंडल चाहिए EMA_200 के लिए, इसलिए लूप को थोड़ा सुरक्षित रखते हैं
     start_idx = 20 if len(df) > 20 else 1
     
     for i in range(start_idx, len(df)):
         score = 0
-        curr_c = round(float(close.iloc[i]), 2)
-        atr = float(df['ATR_14'].iloc[i])
-        vwap_val = float(df['VWAP'].iloc[i])
-        ema200_val = float(df['EMA_200'].iloc[i])
+        curr_c = round(float(df['Close'].iloc[i]), 2)
+        baseline_val = float(df['Baseline'].iloc[i])
         timestamp = df.index[i].strftime("%d-%b %H:%M")
         
-        # --- STRICT INSTITUTIONAL SCORING LOGIC ---
-        # CALL/BUY Zone (तभी खरीदें जब मार्केट VWAP और 200 EMA के ऊपर हो)
-        if curr_c > vwap_val and curr_c > ema200_val:
-            score += 40  # मेजर सेंटिमेंट बुलिश है
-            if curr_c > df['EMA_20'].iloc[i]: score += 20
-            if df['RSI_14'].iloc[i] > 55: score += 20
-            if 'Volume' in df.columns and df['Volume'].iloc[i] > df['Volume'].rolling(20).mean().iloc[i]: score += 20
+        # --- HYPER-SENSITIVE SCORING ---
+        if df['EMA_9'].iloc[i] > df['EMA_21'].iloc[i] and curr_c > baseline_val:
+            score += 40  # Bullish Crossover & Above Baseline
+            if trend[i] == 1: score += 20
+            if df['RSI_14'].iloc[i] > 55: score += 25
             trend_dir = 1
             
-        # PUT/SELL Zone (तभी बेचें जब मार्केट VWAP और 200 EMA के नीचे हो)
-        elif curr_c < vwap_val and curr_c < ema200_val:
-            score += 40  # मेजर सेंटिमेंट बियरिश है
-            if curr_c < df['EMA_20'].iloc[i]: score += 20
-            if df['RSI_14'].iloc[i] < 45: score += 20
-            if 'Volume' in df.columns and df['Volume'].iloc[i] > df['Volume'].rolling(20).mean().iloc[i]: score += 20
+        elif df['EMA_9'].iloc[i] < df['EMA_21'].iloc[i] and curr_c < baseline_val:
+            score += 40  # Bearish Crossover & Below Baseline
+            if trend[i] == -1: score += 20
+            if df['RSI_14'].iloc[i] < 45: score += 25
             trend_dir = -1
         else:
-            # नो-ट्रेड ज़ोन (मार्केट कन्फ्यूज़ है)
             score = 0
             trend_dir = 0
             
         df.at[df.index[i], 'AI_Score'] = score
         
-        # Trade Exit Logic
+        # Trade Management
         if active_trade is not None:
             df.at[df.index[i], 'Signal'] = active_trade['Signal']
             df.at[df.index[i], 'Entry'] = active_trade['Entry']
@@ -99,47 +118,44 @@ def calculate_ai_v5(df, symbol):
             trade_closed = False
             status_msg = ""
             
-            # Target / SL Checking
             if active_trade['Direction'] == 'LONG':
                 if curr_c >= active_trade['Target']:
-                    status_msg, trade_closed = "🎯 TARGET HIT (PROFIT)", True
+                    status_msg, trade_closed = "🎯 TARGET HIT (+PROFIT)", True
                 elif curr_c <= active_trade['StopLoss']:
-                    status_msg, trade_closed = "🛑 SL HIT (LOSS)", True
+                    status_msg, trade_closed = "🛑 SL HIT (-LOSS)", True
             elif active_trade['Direction'] == 'SHORT':
                 if curr_c <= active_trade['Target']:
-                    status_msg, trade_closed = "🎯 TARGET HIT (PROFIT)", True
+                    status_msg, trade_closed = "🎯 TARGET HIT (+PROFIT)", True
                 elif curr_c >= active_trade['StopLoss']:
-                    status_msg, trade_closed = "🛑 SL HIT (LOSS)", True
+                    status_msg, trade_closed = "🛑 SL HIT (-LOSS)", True
             
             if trade_closed:
                 df.at[df.index[i], 'Status'] = status_msg
                 trade_data = {
                     "Time": timestamp,
-                    "Asset": symbol,
+                    "Asset": "NIFTY 50" if is_nifty else symbol.replace(".NS", ""),
                     "Type": active_trade['Type'],
                     "Entry Price": active_trade['Entry'],
                     "Exit Price": curr_c,
                     "Result": status_msg
                 }
-                today_trades.append(trade_data)
-                save_trade_to_csv(trade_data)
+                save_trade(trade_data, is_nifty=is_nifty)
                 active_trade = None 
         else:
-            # 85% से ऊपर स्कोर होने पर ही पक्की एंट्री
             if score >= 85 and trend_dir != 0:
                 atm_strike = int(round(curr_c / 50) * 50)
                 
                 if trend_dir == 1:
-                    t_type = f'{atm_strike} CE' if "NSEI" in symbol else 'BUY'
-                    sig = f'🟢 BUY NIFTY {t_type}' if "NSEI" in symbol else f'🟢 BUY {symbol.replace(".NS","")}'
-                    tgt = curr_c + 50 if "NSEI" in symbol else curr_c + (2 * atr)
-                    sl = curr_c - (1 * atr) # Tight SL
+                    t_type = f'{atm_strike} CE' if is_nifty else 'BUY'
+                    sig = f'🟢 BUY NIFTY {t_type}' if is_nifty else f'🟢 BUY {symbol.replace(".NS","")}'
+                    tgt = curr_c + 50 if is_nifty else curr_c + (curr_c * 0.006)
+                    sl = curr_c - 25 if is_nifty else curr_c - (curr_c * 0.003)
                     direction = 'LONG'
                 else:
-                    t_type = f'{atm_strike} PE' if "NSEI" in symbol else 'SELL'
-                    sig = f'🔴 BUY NIFTY {t_type}' if "NSEI" in symbol else f'🔴 SELL {symbol.replace(".NS","")}'
-                    tgt = curr_c - 50 if "NSEI" in symbol else curr_c - (2 * atr)
-                    sl = curr_c + (1 * atr) # Tight SL
+                    t_type = f'{atm_strike} PE' if is_nifty else 'SELL'
+                    sig = f'🔴 BUY NIFTY {t_type}' if is_nifty else f'🔴 SELL {symbol.replace(".NS","")}'
+                    tgt = curr_c - 50 if is_nifty else curr_c - (curr_c * 0.006)
+                    sl = curr_c + 25 if is_nifty else curr_c + (curr_c * 0.003)
                     direction = 'SHORT'
                 
                 active_trade = {
@@ -156,12 +172,15 @@ def calculate_ai_v5(df, symbol):
                 df.at[df.index[i], 'Target'] = active_trade['Target']
                 df.at[df.index[i], 'StopLoss'] = active_trade['StopLoss']
 
-    return df, today_trades, active_trade
+    return df, active_trade
 
 # ==============================================================================
-# 3. PROFESSIONAL UI SETUP
+# 3. PURE SEPARATED UI SETUP
 # ==============================================================================
-st.set_page_config(page_title="Scalper Pro AI v5.0", layout="wide")
+st.set_page_config(page_title="Scalper Pro AI v6.0", layout="wide")
+
+# Audio alert hidden in markdown
+audio_code = """<audio id="alert-sound" autoplay><source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-500.wav" type="audio/wav"></audio>"""
 
 st.markdown("""
     <style>
@@ -183,85 +202,103 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.sidebar.markdown("<h2 style='text-align: center; font-weight: 700;'>SCALPER PRO <br><span style='color:#deff9a;'>AI v5.0</span></h2>", unsafe_allow_html=True)
+st.sidebar.markdown("<h2 style='text-align: center; font-weight: 700;'>SCALPER PRO <br><span style='color:#deff9a;'>AI v6.0</span></h2>", unsafe_allow_html=True)
 st.sidebar.markdown("<hr style='border-color:#1f293d;'>", unsafe_allow_html=True)
-menu = st.sidebar.radio("Navigation Menu", ["⚡ LIVE NIFTY STATION", "📡 LIVE STOCK RADAR", "📖 ALL-TIME HISTORY"])
+menu = st.sidebar.radio("Navigation Menu", ["⚡ NIFTY OPTIONS", "📡 STOCK RADAR"])
 
-# ------------------------------------------------------------------------------
-# PAGE 1: NIFTY 50 STATION
-# ------------------------------------------------------------------------------
-if menu == "⚡ LIVE NIFTY STATION":
-    st.markdown("<h2 style='color:#f5f5f5;'>⚡ NIFTY 50 AI QUANT STATION</h2>", unsafe_allow_html=True)
+# ==============================================================================
+# PAGE 1: NIFTY OPTIONS (सिर्फ निफ्टी और उसका रिकॉर्ड)
+# ==============================================================================
+if menu == "⚡ NIFTY OPTIONS":
+    st.markdown("<h2 style='color:#f5f5f5;'>⚡ NIFTY 50 OPTIONS TERMINAL</h2>", unsafe_allow_html=True)
     try:
         data = yf.download('^NSEI', period='1d', interval='1m', progress=False)
         if not data.empty:
-            df, _, active_trade = calculate_ai_v5(data, '^NSEI')
+            df, active_trade = calculate_ai_v6(data, '^NSEI')
             last = df.iloc[-1]
+            prev = df.iloc[-2]
             
             curr_p = round(float(df['Close'].iloc[-1]), 2)
             open_p = round(float(df['Open'].iloc[0]), 2)
+            baseline_val = round(float(last['Baseline']), 2)
+            sentiment = "🟢 BULLISH" if curr_p > baseline_val else "🔴 BEARISH"
             
-            # VWAP Sentiment Display
-            vwap_val = round(float(last['VWAP']), 2)
-            sentiment = "🟢 BULLISH (Above VWAP)" if curr_p > vwap_val else "🔴 BEARISH (Below VWAP)"
+            # Sound Trigger Check
+            play_sound = False
             
             if active_trade is not None:
                 cmd_class = "cmd-hold"
-                cmd_text = f"⏳ HOLD : [{active_trade['Signal']}] active hai. Spot Target (₹{active_trade['Target']}) ka wait karein."
+                cmd_text = f"⏳ HOLD : [{active_trade['Type']}] active hai. Spot Target (₹{active_trade['Target']}) ka wait karein."
             elif last['AI_Score'] >= 85:
                 cmd_class = "cmd-buy-c" if "CE" in last['Signal'] else "cmd-buy-p"
-                cmd_text = f"🚀 {last['Signal']} NOW! Institutional Breakout Detected."
+                cmd_text = f"🚀 {last['Signal']} NOW! Fast Momentum Detected."
+                if prev['AI_Score'] < 85: play_sound = True # Naya signal
             else:
                 cmd_class = "cmd-wait"
-                cmd_text = f"✋ WAIT : Market {sentiment} hai par Breakout nahi hai."
+                cmd_text = f"✋ WAIT : Market {sentiment} hai par Momentum weak hai."
+            
+            if play_sound: st.markdown(audio_code, unsafe_allow_html=True)
                 
             st.markdown(f'<div class="command-box {cmd_class}">{cmd_text}</div>', unsafe_allow_html=True)
 
             c1, c2, c3 = st.columns([1.5, 1, 2])
             pts = round(curr_p - open_p, 2)
             c1.metric("📊 NIFTY 50 SPOT", f"₹{curr_p:,}", f"{'+' if pts>=0 else ''}{pts} pts Today")
-            c2.metric("🎯 INSTITUTIONAL VWAP", f"₹{vwap_val:,}")
+            c2.metric("🎯 BASELINE (EMA 50)", f"₹{baseline_val:,}")
             
             with c3:
                 if active_trade is not None:
                     color = "#00ff66" if active_trade['Direction'] == 'LONG' else "#ff3333"
                     st.markdown(f"""
                     <div style="border-left: 8px solid {color}; padding: 15px; background: #0c111d; border-radius: 8px;">
-                        <h3 style="margin:0; color:{color};">⚡ {active_trade['Signal']}</h3>
+                        <h3 style="margin:0; color:{color};">⚡ ACTION: {active_trade['Signal']}</h3>
                         <p style="font-size:18px; margin:5px 0;"><b>SPOT ENTRY:</b> ₹{active_trade['Entry']} | <span style="color:#00ff66;"><b>TARGET:</b> ₹{active_trade['Target']}</span> | <span style="color:#ff3333;"><b>SL:</b> ₹{active_trade['StopLoss']}</span></p>
                     </div>
                     """, unsafe_allow_html=True)
 
+            # Chart (Price vs EMA 9 vs EMA 21 vs Baseline)
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='Price', line=dict(color='#00ffff', width=2)))
-            fig.add_trace(go.Scatter(x=df.index, y=df['VWAP'], name='VWAP (Sentiment)', line=dict(color='#deff9a', width=2, dash='solid')))
-            fig.add_trace(go.Scatter(x=df.index, y=df['EMA_200'], name='200 EMA (Trend)', line=dict(color='#ff3333', width=1, dash='dot')))
-            fig.update_layout(template='plotly_dark', paper_bgcolor='#05070a', plot_bgcolor='#05070a', height=450)
+            fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='Price', line=dict(color='#00ffff', width=2.5)))
+            fig.add_trace(go.Scatter(x=df.index, y=df['EMA_9'], name='9 EMA (Fast)', line=dict(color='#00ff66', width=1)))
+            fig.add_trace(go.Scatter(x=df.index, y=df['EMA_21'], name='21 EMA (Slow)', line=dict(color='#ff3333', width=1)))
+            fig.add_trace(go.Scatter(x=df.index, y=df['Baseline'], name='Baseline', line=dict(color='#deff9a', width=2, dash='dash')))
+            fig.update_layout(template='plotly_dark', paper_bgcolor='#05070a', plot_bgcolor='#05070a', height=450, margin=dict(l=0, r=0, t=10, b=0))
             st.plotly_chart(fig, use_container_width=True)
+            
+            # Nifty History
+            st.markdown("<hr style='border-color:#1f293d;'><h3 style='color:#deff9a;'>📖 NIFTY OPTIONS LOG</h3>", unsafe_allow_html=True)
+            n_hist = load_history(is_nifty=True)
+            if not n_hist.empty:
+                st.dataframe(n_hist.style.apply(lambda x: ['background-color: #021a0d; color: #00ff66' if 'PROFIT' in str(val) else 'background-color: #1a0202; color: #ff3333' if 'LOSS' in str(val) else '' for val in x], subset=['Result']), use_container_width=True)
+            else:
+                st.write("No Nifty trades logged yet.")
     except Exception as e:
-        st.error(f"Data fetching error: {e}")
+        st.error(f"Nifty Data Error: {e}")
 
-# ------------------------------------------------------------------------------
-# PAGE 2: LIVE STOCK RADAR (CLEANED UP)
-# ------------------------------------------------------------------------------
-elif menu == "📡 LIVE STOCK RADAR":
+# ==============================================================================
+# PAGE 2: STOCK RADAR (सिर्फ स्टॉक्स और उनका रिकॉर्ड)
+# ==============================================================================
+elif menu == "📡 STOCK RADAR":
     st.markdown("<h2 style='color:#f5f5f5;'>📡 LIVE STOCK BREAKOUT RADAR</h2>", unsafe_allow_html=True)
-    st.write("VWAP और 200 EMA के आधार पर पक्के स्टॉक सिग्नल्स...")
     
     stocks = ["RELIANCE.NS", "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "TATAMOTORS.NS", "INFY.NS"]
-    
     cols = st.columns(3)
     col_idx = 0
+    play_sound_stock = False
     
     for stock in stocks:
         try:
             s_data = yf.download(stock, period='1d', interval='1m', progress=False)
             if not s_data.empty:
-                s_df, _, s_trade = calculate_ai_v5(s_data, stock)
+                s_df, s_trade = calculate_ai_v6(s_data, stock)
                 name = stock.replace(".NS", "")
                 curr_p = round(float(s_df['Close'].iloc[-1]), 2)
-                vwap_p = round(float(s_df['VWAP'].iloc[-1]), 2)
+                vwap_p = round(float(s_df['Baseline'].iloc[-1]), 2)
                 
+                # Check for new signal to play sound
+                if s_trade is not None and s_df.iloc[-2]['AI_Score'] < 85 and s_df.iloc[-1]['AI_Score'] >= 85:
+                    play_sound_stock = True
+
                 with cols[col_idx % 3]:
                     if s_trade is not None:
                         color_cls = "card-buy" if s_trade['Direction'] == 'LONG' else "card-sell"
@@ -287,27 +324,19 @@ elif menu == "📡 LIVE STOCK RADAR":
                 col_idx += 1
         except:
             pass
-
-# ------------------------------------------------------------------------------
-# PAGE 3: PERMANENT HISTORY RECORD
-# ------------------------------------------------------------------------------
-elif menu == "📖 ALL-TIME HISTORY":
-    st.markdown("<h2 style='color:#f5f5f5;'>📖 ALL-TIME TRADE RECORDS</h2>", unsafe_allow_html=True)
-    st.write("VWAP फिल्टर लगने के बाद आपकी नई एक्यूरेसी यहाँ दिखेगी।")
+            
+    if play_sound_stock: st.markdown(audio_code, unsafe_allow_html=True)
     
-    if os.path.exists(HISTORY_FILE):
-        history_df = pd.read_csv(HISTORY_FILE)
-        # Sort by Time descending
-        history_df = history_df.sort_index(ascending=False)
-        st.dataframe(history_df.style.apply(lambda x: ['background-color: #021a0d; color: #00ff66' if 'PROFIT' in str(val) else 'background-color: #1a0202; color: #ff3333' if 'LOSS' in str(val) else '' for val in x], subset=['Result']), use_container_width=True)
-        
-        total = len(history_df)
-        wins = len(history_df[history_df['Result'].str.contains('PROFIT', na=False, case=False)])
-        accuracy = round((wins/total)*100, 2) if total > 0 else 0
-        st.success(f"🏆 System Accuracy: {accuracy}% (Total Trades: {total})")
+    # Stock History
+    st.markdown("<hr style='border-color:#1f293d;'><h3 style='color:#deff9a;'>📖 STOCK TRADE LOG</h3>", unsafe_allow_html=True)
+    s_hist = load_history(is_nifty=False)
+    if not s_hist.empty:
+        st.dataframe(s_hist.style.apply(lambda x: ['background-color: #021a0d; color: #00ff66' if 'PROFIT' in str(val) else 'background-color: #1a0202; color: #ff3333' if 'LOSS' in str(val) else '' for val in x], subset=['Result']), use_container_width=True)
     else:
-        st.info("No trades have been completed yet. Data will appear here automatically.")
+        st.write("No Stock trades logged yet.")
 
-# Auto Refresh Every 5 Seconds
+# ==============================================================================
+# FAST AUTO-REFRESH (5 SECONDS)
+# ==============================================================================
 time.sleep(5) 
 st.rerun()

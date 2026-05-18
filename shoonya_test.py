@@ -7,7 +7,7 @@ import time
 import os
 
 # ==============================================================================
-# 1. DUAL TRADE HISTORY LOGGERS (निफ्टी और स्टॉक्स के लिए अलग-अलग)
+# 1. DUAL TRADE HISTORY LOGGERS 
 # ==============================================================================
 NIFTY_HISTORY_FILE = "nifty_trade_book.csv"
 STOCK_HISTORY_FILE = "stock_trade_book.csv"
@@ -26,89 +26,56 @@ def save_trade(trade_data, is_nifty=False):
 def load_history(is_nifty=False):
     filename = NIFTY_HISTORY_FILE if is_nifty else STOCK_HISTORY_FILE
     if os.path.exists(filename):
-        df = pd.read_csv(filename)
-        return df.sort_index(ascending=False)
+        return pd.read_csv(filename).sort_index(ascending=False)
     return pd.DataFrame()
 
 # ==============================================================================
-# 2. HYPER-SENSITIVE QUANT ENGINE V6.0 (EMA 9/21 + Baseline + Supertrend)
+# 2. INTRADAY QUANT ENGINE (1-Minute Scalping)
 # ==============================================================================
-def calculate_ai_v6(df, symbol):
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
+def calculate_intraday(df, symbol):
+    if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
 
-    # Fast Momentum EMAs for exact entry catching
     df['EMA_9'] = df['Close'].ewm(span=9, adjust=False).mean()
     df['EMA_21'] = df['Close'].ewm(span=21, adjust=False).mean()
     
-    # Baseline Sentiment (VWAP for stocks, EMA_50 for Nifty because YFinance has no Nifty volume)
     if 'Volume' in df.columns and df['Volume'].sum() > 0:
         df['Typical_Price'] = (df['High'] + df['Low'] + df['Close']) / 3
         df['Cumulative_VP'] = (df['Typical_Price'] * df['Volume']).cumsum()
         df['Cumulative_Vol'] = df['Volume'].cumsum()
-        df['Baseline'] = df['Cumulative_VP'] / (df['Cumulative_Vol'] + 1e-10) # VWAP
+        df['Baseline'] = df['Cumulative_VP'] / (df['Cumulative_Vol'] + 1e-10) 
     else:
-        df['Baseline'] = df['Close'].ewm(span=50, adjust=False).mean() # EMA 50 Fallback
+        df['Baseline'] = df['Close'].ewm(span=50, adjust=False).mean() 
 
-    # RSI & ATR
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / (loss + 1e-10)
     df['RSI_14'] = 100 - (100 / (1 + rs))
 
-    high, low, close = df['High'].squeeze(), df['Low'].squeeze(), df['Close'].squeeze()
-    tr = pd.concat([high - low, (high - close.shift(1)).abs(), (low - close.shift(1)).abs()], axis=1).max(axis=1)
-    df['ATR_14'] = tr.rolling(window=14).mean()
-
-    # Supertrend (10, 3) for confirmation
-    atr_10 = tr.rolling(window=10).mean()
-    hl2 = (high + low) / 2
-    f_ub = (hl2 + (3 * atr_10)).tolist()
-    f_lb = (hl2 - (3 * atr_10)).tolist()
-    c_list = close.tolist()
-    trend = np.ones(len(df))
-    
-    for i in range(1, len(df)):
-        if not (f_ub[i] < f_ub[i-1] or c_list[i-1] > f_ub[i-1]): f_ub[i] = f_ub[i-1]
-        if not (f_lb[i] > f_lb[i-1] or c_list[i-1] < f_lb[i-1]): f_lb[i] = f_lb[i-1]
-        if trend[i-1] == 1 and c_list[i] < f_lb[i]: trend[i] = -1
-        elif trend[i-1] == -1 and c_list[i] > f_ub[i]: trend[i] = 1
-        else: trend[i] = trend[i-1]
-    df['Trend'] = trend
-
     df['AI_Score'], df['Signal'], df['Entry'], df['Target'], df['StopLoss'], df['Status'] = 0, 'WAIT ⏳', 0.0, 0.0, 0.0, ""
-
     active_trade = None
     is_nifty = "NSEI" in symbol
     
-    start_idx = 20 if len(df) > 20 else 1
-    
-    for i in range(start_idx, len(df)):
+    for i in range(20, len(df)):
         score = 0
         curr_c = round(float(df['Close'].iloc[i]), 2)
         baseline_val = float(df['Baseline'].iloc[i])
         timestamp = df.index[i].strftime("%d-%b %H:%M")
         
-        # --- HYPER-SENSITIVE SCORING ---
+        # Crossover Logic
         if df['EMA_9'].iloc[i] > df['EMA_21'].iloc[i] and curr_c > baseline_val:
-            score += 40  # Bullish Crossover & Above Baseline
-            if trend[i] == 1: score += 20
-            if df['RSI_14'].iloc[i] > 55: score += 25
+            score += 40  
+            if df['RSI_14'].iloc[i] > 55: score += 45
             trend_dir = 1
-            
         elif df['EMA_9'].iloc[i] < df['EMA_21'].iloc[i] and curr_c < baseline_val:
-            score += 40  # Bearish Crossover & Below Baseline
-            if trend[i] == -1: score += 20
-            if df['RSI_14'].iloc[i] < 45: score += 25
+            score += 40 
+            if df['RSI_14'].iloc[i] < 45: score += 45
             trend_dir = -1
         else:
-            score = 0
-            trend_dir = 0
+            score, trend_dir = 0, 0
             
         df.at[df.index[i], 'AI_Score'] = score
         
-        # Trade Management
         if active_trade is not None:
             df.at[df.index[i], 'Signal'] = active_trade['Signal']
             df.at[df.index[i], 'Entry'] = active_trade['Entry']
@@ -119,26 +86,15 @@ def calculate_ai_v6(df, symbol):
             status_msg = ""
             
             if active_trade['Direction'] == 'LONG':
-                if curr_c >= active_trade['Target']:
-                    status_msg, trade_closed = "🎯 TARGET HIT (+PROFIT)", True
-                elif curr_c <= active_trade['StopLoss']:
-                    status_msg, trade_closed = "🛑 SL HIT (-LOSS)", True
+                if curr_c >= active_trade['Target']: status_msg, trade_closed = "🎯 TARGET HIT (+PROFIT)", True
+                elif curr_c <= active_trade['StopLoss']: status_msg, trade_closed = "🛑 SL HIT (-LOSS)", True
             elif active_trade['Direction'] == 'SHORT':
-                if curr_c <= active_trade['Target']:
-                    status_msg, trade_closed = "🎯 TARGET HIT (+PROFIT)", True
-                elif curr_c >= active_trade['StopLoss']:
-                    status_msg, trade_closed = "🛑 SL HIT (-LOSS)", True
+                if curr_c <= active_trade['Target']: status_msg, trade_closed = "🎯 TARGET HIT (+PROFIT)", True
+                elif curr_c >= active_trade['StopLoss']: status_msg, trade_closed = "🛑 SL HIT (-LOSS)", True
             
             if trade_closed:
                 df.at[df.index[i], 'Status'] = status_msg
-                trade_data = {
-                    "Time": timestamp,
-                    "Asset": "NIFTY 50" if is_nifty else symbol.replace(".NS", ""),
-                    "Type": active_trade['Type'],
-                    "Entry Price": active_trade['Entry'],
-                    "Exit Price": curr_c,
-                    "Result": status_msg
-                }
+                trade_data = {"Time": timestamp, "Asset": "NIFTY 50" if is_nifty else symbol.replace(".NS", ""), "Type": active_trade['Type'], "Entry Price": active_trade['Entry'], "Exit Price": curr_c, "Result": status_msg}
                 save_trade(trade_data, is_nifty=is_nifty)
                 active_trade = None 
         else:
@@ -158,28 +114,59 @@ def calculate_ai_v6(df, symbol):
                     sl = curr_c + 25 if is_nifty else curr_c + (curr_c * 0.003)
                     direction = 'SHORT'
                 
-                active_trade = {
-                    'Type': t_type, 
-                    'Signal': sig, 
-                    'Entry': curr_c, 
-                    'Target': round(tgt, 2), 
-                    'StopLoss': round(sl, 2),
-                    'Direction': direction
-                }
-                
-                df.at[df.index[i], 'Signal'] = active_trade['Signal']
-                df.at[df.index[i], 'Entry'] = active_trade['Entry']
-                df.at[df.index[i], 'Target'] = active_trade['Target']
-                df.at[df.index[i], 'StopLoss'] = active_trade['StopLoss']
+                active_trade = {'Type': t_type, 'Signal': sig, 'Entry': curr_c, 'Target': round(tgt, 2), 'StopLoss': round(sl, 2), 'Direction': direction}
+                df.at[df.index[i], 'Signal'], df.at[df.index[i], 'Entry'], df.at[df.index[i], 'Target'], df.at[df.index[i], 'StopLoss'] = active_trade['Signal'], active_trade['Entry'], active_trade['Target'], active_trade['StopLoss']
 
     return df, active_trade
 
 # ==============================================================================
-# 3. PURE SEPARATED UI SETUP
+# 3. SWING TRADING ENGINE (3-4 Days Momentum Scanner)
 # ==============================================================================
-st.set_page_config(page_title="Scalper Pro AI v6.0", layout="wide")
+def scan_swing_stocks(tickers):
+    results = []
+    for sym in tickers:
+        try:
+            # 3 महीने का डेली डेटा ला रहे हैं (Swing के लिए)
+            df = yf.download(sym, period='3mo', interval='1d', progress=False)
+            if df.empty or len(df) < 50: continue
+            
+            if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+            
+            df['EMA_20'] = df['Close'].ewm(span=20, adjust=False).mean()
+            df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
+            
+            delta = df['Close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            rs = gain / (loss + 1e-10)
+            df['RSI'] = 100 - (100 / (1 + rs))
+            df['Vol_Avg'] = df['Volume'].rolling(20).mean()
+            
+            last = df.iloc[-1]
+            c = round(float(last['Close']), 2)
+            
+            # SWING CONDITIONS (3-4 din tak upar jane wale)
+            is_uptrend = c > last['EMA_20'] > last['EMA_50']  # Golden Crossover
+            is_momentum = last['RSI'] > 60                    # Strong Buying
+            is_vol_surge = last['Volume'] > (1.5 * last['Vol_Avg']) # Smart Money Entry
+            
+            if is_uptrend and is_momentum and is_vol_surge:
+                results.append({
+                    "Stock": sym.replace('.NS', ''),
+                    "Entry (LTP)": c,
+                    "Target (4%)": round(c * 1.04, 2),
+                    "StopLoss (2%)": round(c * 0.98, 2),
+                    "RSI": round(last['RSI'], 1),
+                    "Status": "🚀 STRONG BUY"
+                })
+        except: pass
+    return results
 
-# Audio alert hidden in markdown
+# ==============================================================================
+# 4. UI SETUP (Sidebar हमेशा खुला रहेगा)
+# ==============================================================================
+st.set_page_config(page_title="Scalper Pro AI v7.0", layout="wide", initial_sidebar_state="expanded")
+
 audio_code = """<audio id="alert-sound" autoplay><source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-500.wav" type="audio/wav"></audio>"""
 
 st.markdown("""
@@ -189,41 +176,38 @@ st.markdown("""
     [data-testid="stSidebar"] * { color: #f5f5f5 !important; }
     #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
     div[data-testid="stMetricValue"] { font-size: 38px; font-weight: 700; color: #00ffff; }
-    
     .command-box { padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 26px; border: 3px solid; margin-bottom: 20px; }
     .cmd-wait { background-color: #111827; color: #8b949e; border-color: #1f293d; }
     .cmd-hold { background-color: #3d2600; color: #ffaa00; border-color: #ffaa00; }
     .cmd-buy-c { background-color: #021a0d; color: #00ff66; border-color: #00ff66; }
     .cmd-buy-p { background-color: #1a0202; color: #ff3333; border-color: #ff3333; }
-    
     .stock-card { background: #0c111d; border-radius: 10px; padding: 20px; border-left: 6px solid #1f293d; margin-bottom: 15px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
     .card-buy { border-color: #00ff66; }
-    .card-sell { border-color: #ff3333; }
     </style>
     """, unsafe_allow_html=True)
 
-st.sidebar.markdown("<h2 style='text-align: center; font-weight: 700;'>SCALPER PRO <br><span style='color:#deff9a;'>AI v6.0</span></h2>", unsafe_allow_html=True)
+st.sidebar.markdown("<h2 style='text-align: center; font-weight: 700;'>SCALPER PRO <br><span style='color:#deff9a;'>AI v7.0</span></h2>", unsafe_allow_html=True)
 st.sidebar.markdown("<hr style='border-color:#1f293d;'>", unsafe_allow_html=True)
-menu = st.sidebar.radio("Navigation Menu", ["⚡ NIFTY OPTIONS", "📡 STOCK RADAR"])
 
-# ==============================================================================
-# PAGE 1: NIFTY OPTIONS (सिर्फ निफ्टी और उसका रिकॉर्ड)
-# ==============================================================================
-if menu == "⚡ NIFTY OPTIONS":
+# 3 मेनू ऑप्शंस
+menu = st.sidebar.radio("Navigation Menu", ["⚡ NIFTY OPTIONS (Intraday)", "📡 STOCK RADAR (Intraday)", "🚀 SWING TRADING (3-4 Days)"])
+
+# ------------------------------------------------------------------------------
+# PAGE 1: NIFTY OPTIONS
+# ------------------------------------------------------------------------------
+if menu == "⚡ NIFTY OPTIONS (Intraday)":
     st.markdown("<h2 style='color:#f5f5f5;'>⚡ NIFTY 50 OPTIONS TERMINAL</h2>", unsafe_allow_html=True)
     try:
         data = yf.download('^NSEI', period='1d', interval='1m', progress=False)
         if not data.empty:
-            df, active_trade = calculate_ai_v6(data, '^NSEI')
+            df, active_trade = calculate_intraday(data, '^NSEI')
             last = df.iloc[-1]
             prev = df.iloc[-2]
             
             curr_p = round(float(df['Close'].iloc[-1]), 2)
             open_p = round(float(df['Open'].iloc[0]), 2)
             baseline_val = round(float(last['Baseline']), 2)
-            sentiment = "🟢 BULLISH" if curr_p > baseline_val else "🔴 BEARISH"
             
-            # Sound Trigger Check
             play_sound = False
             
             if active_trade is not None:
@@ -232,13 +216,12 @@ if menu == "⚡ NIFTY OPTIONS":
             elif last['AI_Score'] >= 85:
                 cmd_class = "cmd-buy-c" if "CE" in last['Signal'] else "cmd-buy-p"
                 cmd_text = f"🚀 {last['Signal']} NOW! Fast Momentum Detected."
-                if prev['AI_Score'] < 85: play_sound = True # Naya signal
+                if prev['AI_Score'] < 85: play_sound = True
             else:
                 cmd_class = "cmd-wait"
-                cmd_text = f"✋ WAIT : Market {sentiment} hai par Momentum weak hai."
+                cmd_text = "✋ WAIT : Market Sideways hai ya Trend weak hai."
             
             if play_sound: st.markdown(audio_code, unsafe_allow_html=True)
-                
             st.markdown(f'<div class="command-box {cmd_class}">{cmd_text}</div>', unsafe_allow_html=True)
 
             c1, c2, c3 = st.columns([1.5, 1, 2])
@@ -256,7 +239,6 @@ if menu == "⚡ NIFTY OPTIONS":
                     </div>
                     """, unsafe_allow_html=True)
 
-            # Chart (Price vs EMA 9 vs EMA 21 vs Baseline)
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='Price', line=dict(color='#00ffff', width=2.5)))
             fig.add_trace(go.Scatter(x=df.index, y=df['EMA_9'], name='9 EMA (Fast)', line=dict(color='#00ff66', width=1)))
@@ -265,40 +247,30 @@ if menu == "⚡ NIFTY OPTIONS":
             fig.update_layout(template='plotly_dark', paper_bgcolor='#05070a', plot_bgcolor='#05070a', height=450, margin=dict(l=0, r=0, t=10, b=0))
             st.plotly_chart(fig, use_container_width=True)
             
-            # Nifty History
             st.markdown("<hr style='border-color:#1f293d;'><h3 style='color:#deff9a;'>📖 NIFTY OPTIONS LOG</h3>", unsafe_allow_html=True)
             n_hist = load_history(is_nifty=True)
-            if not n_hist.empty:
-                st.dataframe(n_hist.style.apply(lambda x: ['background-color: #021a0d; color: #00ff66' if 'PROFIT' in str(val) else 'background-color: #1a0202; color: #ff3333' if 'LOSS' in str(val) else '' for val in x], subset=['Result']), use_container_width=True)
-            else:
-                st.write("No Nifty trades logged yet.")
+            if not n_hist.empty: st.dataframe(n_hist.style.apply(lambda x: ['background-color: #021a0d; color: #00ff66' if 'PROFIT' in str(val) else 'background-color: #1a0202; color: #ff3333' if 'LOSS' in str(val) else '' for val in x], subset=['Result']), use_container_width=True)
     except Exception as e:
-        st.error(f"Nifty Data Error: {e}")
+        st.error(f"Error: {e}")
 
-# ==============================================================================
-# PAGE 2: STOCK RADAR (सिर्फ स्टॉक्स और उनका रिकॉर्ड)
-# ==============================================================================
-elif menu == "📡 STOCK RADAR":
-    st.markdown("<h2 style='color:#f5f5f5;'>📡 LIVE STOCK BREAKOUT RADAR</h2>", unsafe_allow_html=True)
-    
+# ------------------------------------------------------------------------------
+# PAGE 2: STOCK RADAR (Intraday)
+# ------------------------------------------------------------------------------
+elif menu == "📡 STOCK RADAR (Intraday)":
+    st.markdown("<h2 style='color:#f5f5f5;'>📡 INTRADAY STOCK RADAR (1-Min)</h2>", unsafe_allow_html=True)
     stocks = ["RELIANCE.NS", "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "TATAMOTORS.NS", "INFY.NS"]
     cols = st.columns(3)
     col_idx = 0
-    play_sound_stock = False
     
     for stock in stocks:
         try:
             s_data = yf.download(stock, period='1d', interval='1m', progress=False)
             if not s_data.empty:
-                s_df, s_trade = calculate_ai_v6(s_data, stock)
+                s_df, s_trade = calculate_intraday(s_data, stock)
                 name = stock.replace(".NS", "")
                 curr_p = round(float(s_df['Close'].iloc[-1]), 2)
                 vwap_p = round(float(s_df['Baseline'].iloc[-1]), 2)
                 
-                # Check for new signal to play sound
-                if s_trade is not None and s_df.iloc[-2]['AI_Score'] < 85 and s_df.iloc[-1]['AI_Score'] >= 85:
-                    play_sound_stock = True
-
                 with cols[col_idx % 3]:
                     if s_trade is not None:
                         color_cls = "card-buy" if s_trade['Direction'] == 'LONG' else "card-sell"
@@ -322,21 +294,37 @@ elif menu == "📡 STOCK RADAR":
                         </div>
                         """, unsafe_allow_html=True)
                 col_idx += 1
-        except:
-            pass
-            
-    if play_sound_stock: st.markdown(audio_code, unsafe_allow_html=True)
+        except: pass
     
-    # Stock History
     st.markdown("<hr style='border-color:#1f293d;'><h3 style='color:#deff9a;'>📖 STOCK TRADE LOG</h3>", unsafe_allow_html=True)
     s_hist = load_history(is_nifty=False)
-    if not s_hist.empty:
-        st.dataframe(s_hist.style.apply(lambda x: ['background-color: #021a0d; color: #00ff66' if 'PROFIT' in str(val) else 'background-color: #1a0202; color: #ff3333' if 'LOSS' in str(val) else '' for val in x], subset=['Result']), use_container_width=True)
+    if not s_hist.empty: st.dataframe(s_hist.style.apply(lambda x: ['background-color: #021a0d; color: #00ff66' if 'PROFIT' in str(val) else 'background-color: #1a0202; color: #ff3333' if 'LOSS' in str(val) else '' for val in x], subset=['Result']), use_container_width=True)
+
+# ------------------------------------------------------------------------------
+# PAGE 3: SWING TRADING (3-4 Days) - NEW
+# ------------------------------------------------------------------------------
+elif menu == "🚀 SWING TRADING (3-4 Days)":
+    st.markdown("<h2 style='color:#f5f5f5;'>🚀 SWING TRADING RADAR (3-4 Days Target)</h2>", unsafe_allow_html=True)
+    st.write("यह इंजन 1-Day कैंडलस्टिक पर **Golden Crossover (EMA 20 > EMA 50)** और **Heavy Volume Breakout** ढूँढता है। (डिलीवरी में खरीदें)")
+    
+    # Top 15 High Momentum / Nifty 50 Stocks
+    swing_list = ["RELIANCE.NS", "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "TATAMOTORS.NS", 
+                  "INFY.NS", "TCS.NS", "BAJFINANCE.NS", "BHARTIARTL.NS", "ITC.NS", 
+                  "LT.NS", "M&M.NS", "MARUTI.NS", "SUNPHARMA.NS", "TATASTEEL.NS"]
+    
+    with st.spinner("Scanning Daily Charts for 3-4 Days Momentum... Please wait."):
+        swing_results = scan_swing_stocks(swing_list)
+        
+    if swing_results:
+        st.success("🔥 High Momentum Stocks Found!")
+        df_swing = pd.DataFrame(swing_results)
+        st.dataframe(df_swing, use_container_width=True)
     else:
-        st.write("No Stock trades logged yet.")
+        st.info("📉 Abhi market mein koi perfect Swing Breakout nahi mila. Kal dubara check karein.")
 
 # ==============================================================================
-# FAST AUTO-REFRESH (5 SECONDS)
+# REFRESH LOGIC
 # ==============================================================================
-time.sleep(5) 
+# Swing tab par bar-bar refresh ki zaroorat nahi hoti, but intraday ke liye 8 seconds set kiya hai
+time.sleep(8) 
 st.rerun()

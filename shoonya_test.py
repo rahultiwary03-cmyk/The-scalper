@@ -48,12 +48,10 @@ def load_history(is_nifty=False):
 def calculate_intraday(df, symbol):
     if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
 
-    # Core EMAs
     df['EMA_9'] = df['Close'].ewm(span=9, adjust=False).mean()
     df['EMA_21'] = df['Close'].ewm(span=21, adjust=False).mean()
     df['EMA_200'] = df['Close'].ewm(span=200, adjust=False).mean()
     
-    # VWAP & Volume
     if 'Volume' in df.columns and df['Volume'].sum() > 0:
         df['Typical_Price'] = (df['High'] + df['Low'] + df['Close']) / 3
         df['Cumulative_VP'] = (df['Typical_Price'] * df['Volume']).cumsum()
@@ -64,7 +62,6 @@ def calculate_intraday(df, symbol):
         df['Baseline'] = df['Close'].ewm(span=50, adjust=False).mean() 
         df['Vol_Avg'] = 1
 
-    # RSI & ATR
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -75,8 +72,6 @@ def calculate_intraday(df, symbol):
     tr = pd.concat([high - low, (high - close.shift(1)).abs(), (low - close.shift(1)).abs()], axis=1).max(axis=1)
     df['ATR_14'] = tr.rolling(window=14).mean()
 
-    # 🚀 ADX / CHOP ZONE FILTER (To prevent SL hits in sideways market)
-    # If the distance between 9 EMA and 21 EMA is too small, market is chopping.
     df['EMA_Dist_Pct'] = (abs(df['EMA_9'] - df['EMA_21']) / df['Close']) * 100
 
     df['AI_Score'], df['Signal'], df['Entry'], df['Target'], df['StopLoss'], df['Status'] = 0, 'WAIT ⏳', 0.0, 0.0, 0.0, ""
@@ -95,7 +90,6 @@ def calculate_intraday(df, symbol):
         ist_time = candle_time.tz_convert('Asia/Kolkata')
         timestamp = ist_time.strftime("%d-%b %I:%M %p")
         
-        # 🕒 EOD CHECK (3:15 PM Cutoff)
         is_eod = False
         if ist_time.hour == 15 and ist_time.minute >= 15:
             is_eod = True
@@ -106,7 +100,6 @@ def calculate_intraday(df, symbol):
         if 'Volume' in df.columns and df['Volume'].sum() > 0:
             vol_surge = float(df['Volume'].iloc[i]) > (1.5 * float(df['Vol_Avg'].iloc[i]))
             
-        # Is Market Trending? (Distance between fast and slow EMA must be > 0.03%)
         is_trending = df['EMA_Dist_Pct'].iloc[i] > 0.03
         
         if not is_eod:
@@ -123,7 +116,7 @@ def calculate_intraday(df, symbol):
             else:
                 score, trend_dir = 0, 0
         else:
-            score, trend_dir = 0, 0 # NO NEW TRADES AFTER 3:15 PM
+            score, trend_dir = 0, 0 
             
         df.at[df.index[i], 'AI_Score'] = score
         
@@ -136,7 +129,6 @@ def calculate_intraday(df, symbol):
             trade_closed = False
             status_msg = ""
             
-            # 🕒 Force Close if 3:15 PM is hit
             if is_eod:
                 status_msg, trade_closed = "⏱️ EOD SQUARE-OFF", True
             elif active_trade['Direction'] == 'LONG':
@@ -170,7 +162,7 @@ def calculate_intraday(df, symbol):
                     t_type = f'{atm_strike} CE' if is_nifty else 'BUY'
                     sig = f'🟢 BUY NIFTY {t_type}' if is_nifty else f'🟢 BUY {symbol.replace(".NS","")}'
                     tgt = curr_c + 50 if is_nifty else curr_c + (curr_c * 0.006)
-                    sl = curr_c - 20 if is_nifty else curr_c - (curr_c * 0.003) # SL tightened to 20 pts for better RR
+                    sl = curr_c - 20 if is_nifty else curr_c - (curr_c * 0.003) 
                     direction = 'LONG'
                 else:
                     t_type = f'{atm_strike} PE' if is_nifty else 'SELL'
@@ -185,47 +177,62 @@ def calculate_intraday(df, symbol):
     return df, active_trade
 
 # ==============================================================================
-# 3. SWING TRADING ENGINE
+# 3. SWING TRADING ENGINE (v13.0: DYNAMIC SCORING SYSTEM)
 # ==============================================================================
 def scan_swing_stocks(tickers):
     results = []
     for sym in tickers:
         try:
-            df = yf.download(sym, period='3mo', interval='1d', progress=False)
+            # 6 months data for better EMA 50 accuracy
+            df = yf.download(sym, period='6mo', interval='1d', progress=False)
             if df.empty or len(df) < 50: continue
             if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
             
             df['EMA_20'] = df['Close'].ewm(span=20, adjust=False).mean()
             df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
-            df['RSI'] = 100 - (100 / (1 + (df['Close'].diff().where(df['Close'].diff() > 0, 0).rolling(14).mean() / (-df['Close'].diff().where(df['Close'].diff() < 0, 0).rolling(14).mean() + 1e-10))))
+            
+            delta = df['Close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            rs = gain / (loss + 1e-10)
+            df['RSI'] = 100 - (100 / (1 + rs))
             df['Vol_Avg'] = df['Volume'].rolling(20).mean()
             
             last = df.iloc[-1]
             c = round(float(last['Close']), 2)
             
-            is_uptrend = c > last['EMA_20'] > last['EMA_50']
-            is_momentum = last['RSI'] > 60
-            is_vol_surge = last['Volume'] > (1.5 * last['Vol_Avg'])
+            # Dynamic conditions (Relaxed for early breakout capture)
+            is_uptrend = c > last['EMA_20'] and last['EMA_20'] > last['EMA_50']
+            is_momentum = last['RSI'] >= 55  # Relaxed from 60 to 55
+            is_vol_surge = last['Volume'] > (1.2 * last['Vol_Avg']) # Relaxed from 1.5x to 1.2x
             
-            status = "🚀 STRONG BUY" if (is_uptrend and is_momentum and is_vol_surge) else "⏳ WAIT"
+            # Score out of 3
+            score = sum([is_uptrend, is_momentum, is_vol_surge])
+            
+            if score == 3:
+                status = "🚀 STRONG BUY"
+            elif score == 2 and is_uptrend: # Must be in an uptrend to be considered
+                status = "🔥 POTENTIAL (Watch)"
+            else:
+                status = "⏳ WAIT"
             
             results.append({
                 "Stock": sym.replace('.NS', ''),
                 "LTP (₹)": c,
-                "RSI (>60)": f"{round(last['RSI'], 1)} {'✅' if is_momentum else '❌'}",
+                "RSI (>55)": f"{round(last['RSI'], 1)} {'✅' if is_momentum else '❌'}",
                 "Uptrend": "✅" if is_uptrend else "❌",
                 "Vol Surge": "✅" if is_vol_surge else "❌",
                 "Action": status,
-                "Target": f"₹{round(c * 1.04, 2)}" if status == "🚀 STRONG BUY" else "-",
-                "SL": f"₹{round(c * 0.98, 2)}" if status == "🚀 STRONG BUY" else "-"
+                "Target (5%)": f"₹{round(c * 1.05, 2)}" if status != "⏳ WAIT" else "-",
+                "SL (2.5%)": f"₹{round(c * 0.975, 2)}" if status != "⏳ WAIT" else "-"
             })
         except: pass
     return results
 
 # ==============================================================================
-# 4. UI SETUP (Live Clock & Premium Calculator)
+# 4. UI SETUP 
 # ==============================================================================
-st.set_page_config(page_title="Scalper Pro AI v12.0", layout="wide")
+st.set_page_config(page_title="Scalper Pro AI v13.0", layout="wide")
 audio_code = """<audio id="alert-sound" autoplay><source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-500.wav" type="audio/wav"></audio>"""
 
 st.markdown("""
@@ -249,7 +256,6 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 🕒 LIVE MARKET CLOCK LOGIC
 tz = pytz.timezone('Asia/Kolkata')
 now_ist = datetime.datetime.now(tz)
 current_time_str = now_ist.strftime("%I:%M:%S %p")
@@ -257,7 +263,7 @@ is_market_closed = now_ist.hour > 15 or (now_ist.hour == 15 and now_ist.minute >
 
 col_h1, col_h2, col_h3 = st.columns([1, 2, 1])
 with col_h2:
-    st.markdown(f"<h2 style='text-align: center; font-weight: 700; margin-bottom: 0;'>SCALPER PRO <span style='color:#deff9a;'>AI v12.0</span></h2>", unsafe_allow_html=True)
+    st.markdown(f"<h2 style='text-align: center; font-weight: 700; margin-bottom: 0;'>SCALPER PRO <span style='color:#deff9a;'>AI v13.0</span></h2>", unsafe_allow_html=True)
 with col_h3:
     color_time = "#ff3333" if is_market_closed else "#00ff66"
     st.markdown(f"<div style='text-align: right; padding-top: 15px; font-size: 24px; font-weight: bold; color: {color_time};'>🕒 {current_time_str} IST</div>", unsafe_allow_html=True)
@@ -281,7 +287,6 @@ with tab1:
             baseline_val = round(float(last['Baseline']), 2)
             play_sound = False
             
-            # EOD Logic for UI
             is_eod_ui = now_ist.hour >= 15 and now_ist.minute >= 15
             
             if is_eod_ui:
@@ -322,9 +327,8 @@ with tab1:
                     bg_color_fill = f"rgba(0, 255, 102, 0.3)" if active_trade['Direction'] == 'LONG' else f"rgba(255, 51, 51, 0.3)"
                     bg_style = f"background: linear-gradient(90deg, {bg_color_fill} {progress_pct}%, #0c111d {progress_pct}%);"
                     
-                    # 🚀 OPTIONS PREMIUM CALCULATOR (Delta 0.5 Estimation)
-                    est_prem_target = 25 # 50 pt spot move = ~25 pt premium move
-                    est_prem_sl = -10    # 20 pt spot move = ~10 pt premium decay
+                    est_prem_target = 25 
+                    est_prem_sl = -10    
                     
                     st.markdown(f"""
                     <div style="border-left: 8px solid {color}; padding: 15px; border-radius: 8px; {bg_style} transition: background 0.5s ease;">
@@ -370,6 +374,7 @@ with tab2:
                 name = stock.replace(".NS", "")
                 curr_p = round(float(s_df['Close'].iloc[-1]), 2)
                 vwap_p = round(float(s_df['Baseline'].iloc[-1]), 2)
+                ema200 = round(float(s_df['EMA_200'].iloc[-1]), 2)
                 
                 with cols[col_idx % 3]:
                     if now_ist.hour >= 15 and now_ist.minute >= 15:
@@ -407,8 +412,8 @@ with tab2:
                         st.markdown(f"""
                         <div class="stock-card">
                             <h3 style="color:#f5f5f5; margin:0;">{name}</h3>
-                            <p style="margin:5px 0; color:#8b949e;">LTP: ₹{curr_p} | VWAP: ₹{vwap_p}</p>
-                            <p style="margin:10px 0 0 0; color:#ffaa00;">Sideways/No Volume. Wait ⏳</p>
+                            <p style="margin:5px 0; color:#8b949e;">LTP: ₹{curr_p} | VWAP: ₹{vwap_p} <br> 200 EMA: ₹{ema200}</p>
+                            <p style="margin:10px 0 0 0; color:#ffaa00;">Waiting for Volume Breakout ⏳</p>
                         </div>
                         """, unsafe_allow_html=True)
                 col_idx += 1
@@ -420,10 +425,10 @@ with tab2:
         st.dataframe(s_hist.style.apply(lambda x: ['background-color: #021a0d; color: #00ff66; font-weight: bold' if 'PROFIT' in str(val) else 'background-color: #1a0202; color: #ff3333; font-weight: bold' if 'LOSS' in str(val) or 'SQUARE-OFF' in str(val) else '' for val in x], subset=['Result']), use_container_width=True, hide_index=True)
 
 # ------------------------------------------------------------------------------
-# TAB 3: SWING TRADING
+# TAB 3: SWING TRADING (DYNAMIC SCORING)
 # ------------------------------------------------------------------------------
 with tab3:
-    st.write("15 स्टॉक्स का डेली (1-Day) चार्ट स्कैन हो रहा है। (Target: 4%, SL: 2%)")
+    st.write("🔥 15 स्टॉक्स का डेली (1-Day) चार्ट स्कैन हो रहा है। (Target: 5%, SL: 2.5%)")
     swing_list = ["RELIANCE.NS", "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "TATAMOTORS.NS", 
                   "INFY.NS", "TCS.NS", "BAJFINANCE.NS", "BHARTIARTL.NS", "ITC.NS", 
                   "LT.NS", "M&M.NS", "MARUTI.NS", "SUNPHARMA.NS", "TATASTEEL.NS"]
@@ -433,7 +438,20 @@ with tab3:
         
     if swing_results:
         df_swing = pd.DataFrame(swing_results)
-        st.dataframe(df_swing.style.apply(lambda x: ['background-color: #021a0d; color: #00ff66; font-weight: bold' if 'STRONG BUY' in str(val) else '' for val in x], subset=['Action']), use_container_width=True, hide_index=True)
+        
+        # Color formatting function for Action column
+        def style_action(x):
+            styles = []
+            for val in x:
+                if 'STRONG BUY' in str(val):
+                    styles.append('background-color: #021a0d; color: #00ff66; font-weight: bold')
+                elif 'POTENTIAL' in str(val):
+                    styles.append('background-color: #3d2600; color: #ffaa00; font-weight: bold')
+                else:
+                    styles.append('')
+            return styles
+            
+        st.dataframe(df_swing.style.apply(style_action, subset=['Action']), use_container_width=True, hide_index=True)
 
 # ------------------------------------------------------------------------------
 # TAB 4: ABOUT CREATOR

@@ -8,27 +8,42 @@ import os
 from datetime import timedelta
 
 # ==============================================================================
-# 1. ADVANCED TRADE HISTORY LOGGERS (Detailed & IST Time)
+# 1. ADVANCED TRADE HISTORY LOGGERS (Auto-Healing Schema)
 # ==============================================================================
 NIFTY_HISTORY_FILE = "nifty_trade_book.csv"
 STOCK_HISTORY_FILE = "stock_trade_book.csv"
 
 def save_trade(trade_data, is_nifty=False):
     filename = NIFTY_HISTORY_FILE if is_nifty else STOCK_HISTORY_FILE
-    df = pd.DataFrame([trade_data])
+    df_new = pd.DataFrame([trade_data])
+    
     if not os.path.exists(filename):
-        df.to_csv(filename, index=False)
+        df_new.to_csv(filename, index=False)
     else:
-        existing = pd.read_csv(filename)
-        # Duplicate check based on Time and Asset
-        is_duplicate = ((existing['Time (IST)'] == trade_data['Time (IST)']) & (existing['Asset'] == trade_data['Asset'])).any()
-        if not is_duplicate:
-            df.to_csv(filename, mode='a', header=False, index=False)
+        try:
+            existing = pd.read_csv(filename)
+            # अगर पुरानी फाइल है (जिसमें Time (IST) नहीं है), तो नई फाइल से रिप्लेस कर दो
+            if 'Time (IST)' not in existing.columns:
+                df_new.to_csv(filename, index=False)
+            else:
+                is_duplicate = ((existing['Time (IST)'] == trade_data['Time (IST)']) & (existing['Asset'] == trade_data['Asset'])).any()
+                if not is_duplicate:
+                    df_new.to_csv(filename, mode='a', header=False, index=False)
+        except Exception:
+            # क्रैश होने पर भी सिस्टम रुके ना
+            df_new.to_csv(filename, index=False)
 
 def load_history(is_nifty=False):
     filename = NIFTY_HISTORY_FILE if is_nifty else STOCK_HISTORY_FILE
     if os.path.exists(filename):
-        return pd.read_csv(filename).sort_index(ascending=False)
+        try:
+            df = pd.read_csv(filename)
+            # अगर पुरानी फाइल लोड हो रही है तो खाली टेबल दिखाओ ताकि क्रैश ना हो
+            if 'Time (IST)' not in df.columns:
+                return pd.DataFrame()
+            return df.sort_index(ascending=False)
+        except:
+            return pd.DataFrame()
     return pd.DataFrame()
 
 # ==============================================================================
@@ -64,14 +79,12 @@ def calculate_intraday(df, symbol):
         curr_c = round(float(df['Close'].iloc[i]), 2)
         baseline_val = float(df['Baseline'].iloc[i])
         
-        # 🕒 Indian Time (IST) Fix
         candle_time = df.index[i]
         if candle_time.tz is None:
             candle_time = candle_time.tz_localize('UTC')
         ist_time = candle_time.tz_convert('Asia/Kolkata')
         timestamp = ist_time.strftime("%d-%b %I:%M %p")
         
-        # Crossover Logic
         if df['EMA_9'].iloc[i] > df['EMA_21'].iloc[i] and curr_c > baseline_val:
             score += 40  
             if df['RSI_14'].iloc[i] > 55: score += 45
@@ -103,7 +116,6 @@ def calculate_intraday(df, symbol):
             
             if trade_closed:
                 df.at[df.index[i], 'Status'] = status_msg
-                # 📝 NEW DETAILED LOG FORMAT
                 trade_data = {
                     "Time (IST)": timestamp, 
                     "Asset": "NIFTY 50" if is_nifty else symbol.replace(".NS", ""), 
@@ -184,7 +196,7 @@ def scan_swing_stocks(tickers):
 # ==============================================================================
 # 4. UI SETUP
 # ==============================================================================
-st.set_page_config(page_title="Scalper Pro AI v10.0", layout="wide")
+st.set_page_config(page_title="Scalper Pro AI v10.1", layout="wide")
 audio_code = """<audio id="alert-sound" autoplay><source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-500.wav" type="audio/wav"></audio>"""
 
 st.markdown("""
@@ -210,7 +222,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.markdown("<h2 style='text-align: center; font-weight: 700;'>SCALPER PRO <span style='color:#deff9a;'>AI v10.0</span></h2>", unsafe_allow_html=True)
+st.markdown("<h2 style='text-align: center; font-weight: 700;'>SCALPER PRO <span style='color:#deff9a;'>AI v10.1</span></h2>", unsafe_allow_html=True)
 st.markdown("<hr style='border-color:#1f293d;'>", unsafe_allow_html=True)
 
 tab1, tab2, tab3, tab4 = st.tabs(["⚡ NIFTY OPTIONS", "📡 INTRADAY STOCKS", "🚀 SWING TRADING", "👨‍💻 ABOUT CREATOR"])
@@ -285,10 +297,9 @@ with tab1:
             st.markdown("<hr style='border-color:#1f293d;'><h3 style='color:#deff9a;'>📖 NIFTY OPTIONS LOG (Spot Basis)</h3>", unsafe_allow_html=True)
             n_hist = load_history(is_nifty=True)
             if not n_hist.empty: 
-                # Better DataFrame Display
                 st.dataframe(n_hist.style.apply(lambda x: ['background-color: #021a0d; color: #00ff66; font-weight: bold' if 'PROFIT' in str(val) else 'background-color: #1a0202; color: #ff3333; font-weight: bold' if 'LOSS' in str(val) else '' for val in x], subset=['Result']), use_container_width=True, hide_index=True)
             else:
-                st.write("Abhi tak koi trade close nahi hua hai.")
+                st.write("Abhi tak koi naya trade log nahi hua hai.")
     except Exception as e:
         st.error(f"Error: {e}")
 

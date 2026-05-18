@@ -30,7 +30,7 @@ def load_history(is_nifty=False):
     return pd.DataFrame()
 
 # ==============================================================================
-# 2. INTRADAY QUANT ENGINE (1-Minute Scalping)
+# 2. INTRADAY QUANT ENGINE
 # ==============================================================================
 def calculate_intraday(df, symbol):
     if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
@@ -121,7 +121,7 @@ def calculate_intraday(df, symbol):
     return df, active_trade
 
 # ==============================================================================
-# 3. SWING TRADING ENGINE (FULL TRANSPARENCY)
+# 3. SWING TRADING ENGINE (3-4 Days)
 # ==============================================================================
 def scan_swing_stocks(tickers):
     results = []
@@ -144,7 +144,6 @@ def scan_swing_stocks(tickers):
             last = df.iloc[-1]
             c = round(float(last['Close']), 2)
             
-            # SWING CONDITIONS
             is_uptrend = c > last['EMA_20'] > last['EMA_50']
             is_momentum = last['RSI'] > 60
             is_vol_surge = last['Volume'] > (1.5 * last['Vol_Avg'])
@@ -165,18 +164,25 @@ def scan_swing_stocks(tickers):
     return results
 
 # ==============================================================================
-# 4. UI SETUP
+# 4. UI SETUP (TABS INSTEAD OF SIDEBAR)
 # ==============================================================================
-st.set_page_config(page_title="Scalper Pro AI v8.0", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Scalper Pro AI v9.0", layout="wide")
 audio_code = """<audio id="alert-sound" autoplay><source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-500.wav" type="audio/wav"></audio>"""
 
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; color: #ffffff; }
-    [data-testid="stSidebar"] { background-color: #090d16 !important; border-right: 1px solid #1f293d !important; }
-    [data-testid="stSidebar"] * { color: #f5f5f5 !important; }
     #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
     div[data-testid="stMetricValue"] { font-size: 38px; font-weight: 700; color: #00ffff; }
+    
+    /* Hide default sidebar entirely */
+    [data-testid="collapsedControl"] { display: none; }
+    
+    /* Styling for Tabs to look like Buttons */
+    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
+    .stTabs [data-baseweb="tab"] { background-color: #090d16; border-radius: 10px 10px 0 0; border: 1px solid #1f293d; border-bottom: none; padding: 10px 20px; font-size: 18px; font-weight: bold; }
+    .stTabs [aria-selected="true"] { background-color: #1f293d; color: #deff9a !important; border-bottom: 2px solid #deff9a; }
+    
     .command-box { padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 26px; border: 3px solid; margin-bottom: 20px; }
     .cmd-wait { background-color: #111827; color: #8b949e; border-color: #1f293d; }
     .cmd-hold { background-color: #3d2600; color: #ffaa00; border-color: #ffaa00; }
@@ -188,15 +194,16 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.sidebar.markdown("<h2 style='text-align: center; font-weight: 700;'>SCALPER PRO <br><span style='color:#deff9a;'>AI v8.0</span></h2>", unsafe_allow_html=True)
-st.sidebar.markdown("<hr style='border-color:#1f293d;'>", unsafe_allow_html=True)
-menu = st.sidebar.radio("Navigation Menu", ["⚡ NIFTY OPTIONS (Intraday)", "📡 STOCK RADAR (Intraday)", "🚀 SWING TRADING (3-4 Days)"])
+st.markdown("<h2 style='text-align: center; font-weight: 700;'>SCALPER PRO <span style='color:#deff9a;'>AI v9.0</span></h2>", unsafe_allow_html=True)
+st.markdown("<hr style='border-color:#1f293d;'>", unsafe_allow_html=True)
+
+# 🚀 NAYA FEATURE: TOP MENU TABS (सामने ही बटन दिखेंगे)
+tab1, tab2, tab3 = st.tabs(["⚡ NIFTY OPTIONS", "📡 INTRADAY STOCKS", "🚀 SWING TRADING (3-4 Days)"])
 
 # ------------------------------------------------------------------------------
-# PAGE 1: NIFTY OPTIONS
+# TAB 1: NIFTY OPTIONS
 # ------------------------------------------------------------------------------
-if menu == "⚡ NIFTY OPTIONS (Intraday)":
-    st.markdown("<h2 style='color:#f5f5f5;'>⚡ NIFTY 50 OPTIONS TERMINAL</h2>", unsafe_allow_html=True)
+with tab1:
     try:
         data = yf.download('^NSEI', period='1d', interval='1m', progress=False)
         if not data.empty:
@@ -223,18 +230,35 @@ if menu == "⚡ NIFTY OPTIONS (Intraday)":
             if play_sound: st.markdown(audio_code, unsafe_allow_html=True)
             st.markdown(f'<div class="command-box {cmd_class}">{cmd_text}</div>', unsafe_allow_html=True)
 
-            c1, c2, c3 = st.columns([1.5, 1, 2])
+            c1, c2, c3 = st.columns([1.2, 1, 2.5])
             pts = round(curr_p - open_p, 2)
-            c1.metric("📊 NIFTY 50 SPOT", f"₹{curr_p:,}", f"{'+' if pts>=0 else ''}{pts} pts Today")
+            c1.metric("📊 NIFTY 50 SPOT", f"₹{curr_p:,}", f"{'+' if pts>=0 else ''}{pts} pts")
             c2.metric("🎯 BASELINE (EMA 50)", f"₹{baseline_val:,}")
             
             with c3:
                 if active_trade is not None:
+                    # 🚀 NAYA FEATURE: DYNAMIC COLOR FILL (Progress Bar Background)
+                    entry_p = active_trade['Entry']
+                    target_p = active_trade['Target']
+                    
+                    if active_trade['Direction'] == 'LONG':
+                        progress_pct = ((curr_p - entry_p) / (target_p - entry_p)) * 100 if target_p > entry_p else 0
+                    else:
+                        progress_pct = ((entry_p - curr_p) / (entry_p - target_p)) * 100 if entry_p > target_p else 0
+                        
+                    progress_pct = max(0, min(100, progress_pct)) # 0% से 100% के बीच रखें
+                    
                     color = "#00ff66" if active_trade['Direction'] == 'LONG' else "#ff3333"
+                    bg_color_fill = f"rgba(0, 255, 102, 0.3)" if active_trade['Direction'] == 'LONG' else f"rgba(255, 51, 51, 0.3)"
+                    
+                    # CSS Magic for filling background
+                    bg_style = f"background: linear-gradient(90deg, {bg_color_fill} {progress_pct}%, #0c111d {progress_pct}%);"
+                    
                     st.markdown(f"""
-                    <div style="border-left: 8px solid {color}; padding: 15px; background: #0c111d; border-radius: 8px;">
+                    <div style="border-left: 8px solid {color}; padding: 15px; border-radius: 8px; {bg_style} transition: background 0.5s ease;">
                         <h3 style="margin:0; color:{color};">⚡ ACTION: {active_trade['Signal']}</h3>
-                        <p style="font-size:18px; margin:5px 0;"><b>SPOT ENTRY:</b> ₹{active_trade['Entry']} | <span style="color:#00ff66;"><b>TARGET:</b> ₹{active_trade['Target']}</span> | <span style="color:#ff3333;"><b>SL:</b> ₹{active_trade['StopLoss']}</span></p>
+                        <p style="font-size:18px; margin:5px 0; color:#f5f5f5;"><b>SPOT ENTRY:</b> ₹{entry_p} | <span style="color:#00ff66;"><b>TARGET:</b> ₹{target_p}</span> | <span style="color:#ff3333;"><b>SL:</b> ₹{active_trade['StopLoss']}</span></p>
+                        <div style="margin-top: 5px; font-weight: bold; color: #deff9a;">🎯 Target Progress: {progress_pct:.1f}%</div>
                     </div>
                     """, unsafe_allow_html=True)
 
@@ -243,7 +267,7 @@ if menu == "⚡ NIFTY OPTIONS (Intraday)":
             fig.add_trace(go.Scatter(x=df.index, y=df['EMA_9'], name='9 EMA (Fast)', line=dict(color='#00ff66', width=1)))
             fig.add_trace(go.Scatter(x=df.index, y=df['EMA_21'], name='21 EMA (Slow)', line=dict(color='#ff3333', width=1)))
             fig.add_trace(go.Scatter(x=df.index, y=df['Baseline'], name='Baseline', line=dict(color='#deff9a', width=2, dash='dash')))
-            fig.update_layout(template='plotly_dark', paper_bgcolor='#05070a', plot_bgcolor='#05070a', height=450, margin=dict(l=0, r=0, t=10, b=0))
+            fig.update_layout(template='plotly_dark', paper_bgcolor='#05070a', plot_bgcolor='#05070a', height=400, margin=dict(l=0, r=0, t=10, b=0))
             st.plotly_chart(fig, use_container_width=True)
             
             st.markdown("<hr style='border-color:#1f293d;'><h3 style='color:#deff9a;'>📖 NIFTY OPTIONS LOG</h3>", unsafe_allow_html=True)
@@ -251,14 +275,11 @@ if menu == "⚡ NIFTY OPTIONS (Intraday)":
             if not n_hist.empty: st.dataframe(n_hist.style.apply(lambda x: ['background-color: #021a0d; color: #00ff66' if 'PROFIT' in str(val) else 'background-color: #1a0202; color: #ff3333' if 'LOSS' in str(val) else '' for val in x], subset=['Result']), use_container_width=True)
     except Exception as e:
         st.error(f"Error: {e}")
-    time.sleep(8) 
-    st.rerun()
 
 # ------------------------------------------------------------------------------
-# PAGE 2: STOCK RADAR (Intraday)
+# TAB 2: INTRADAY STOCKS
 # ------------------------------------------------------------------------------
-elif menu == "📡 STOCK RADAR (Intraday)":
-    st.markdown("<h2 style='color:#f5f5f5;'>📡 INTRADAY STOCK RADAR (1-Min)</h2>", unsafe_allow_html=True)
+with tab2:
     stocks = ["RELIANCE.NS", "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "TATAMOTORS.NS", "INFY.NS"]
     cols = st.columns(3)
     col_idx = 0
@@ -276,14 +297,25 @@ elif menu == "📡 STOCK RADAR (Intraday)":
                     if s_trade is not None:
                         color_cls = "card-buy" if s_trade['Direction'] == 'LONG' else "card-sell"
                         t_col = "#00ff66" if s_trade['Direction'] == 'LONG' else "#ff3333"
+                        
+                        # Live Fill for Stocks too
+                        entry_p = s_trade['Entry']
+                        target_p = s_trade['Target']
+                        if s_trade['Direction'] == 'LONG': prog = ((curr_p - entry_p) / (target_p - entry_p)) * 100 if target_p > entry_p else 0
+                        else: prog = ((entry_p - curr_p) / (entry_p - target_p)) * 100 if entry_p > target_p else 0
+                        prog = max(0, min(100, prog))
+                        bg_fill = f"rgba(0, 255, 102, 0.3)" if s_trade['Direction'] == 'LONG' else f"rgba(255, 51, 51, 0.3)"
+                        bg_style = f"background: linear-gradient(90deg, {bg_fill} {prog}%, #0c111d {prog}%);"
+                        
                         st.markdown(f"""
-                        <div class="stock-card {color_cls}">
+                        <div class="stock-card {color_cls}" style="{bg_style} transition: background 0.5s ease;">
                             <h3 style="color:{t_col}; margin:0;">{s_trade['Signal']}</h3>
                             <p style="margin:5px 0; color:#8b949e;">LTP: ₹{curr_p} | VWAP: ₹{vwap_p}</p>
                             <hr style="border-color:#1f293d; margin: 10px 0;">
                             <h4 style="margin:5px 0; color:#f5f5f5;">ENTRY: ₹{s_trade['Entry']}</h4>
                             <h4 style="margin:5px 0; color:#00ff66;">TARGET: ₹{s_trade['Target']}</h4>
                             <h4 style="margin:0; color:#ff3333;">SL: ₹{s_trade['StopLoss']}</h4>
+                            <p style="margin-top: 5px; color: #deff9a; font-weight: bold;">🎯 Prog: {prog:.1f}%</p>
                         </div>
                         """, unsafe_allow_html=True)
                     else:
@@ -300,27 +332,26 @@ elif menu == "📡 STOCK RADAR (Intraday)":
     st.markdown("<hr style='border-color:#1f293d;'><h3 style='color:#deff9a;'>📖 STOCK TRADE LOG</h3>", unsafe_allow_html=True)
     s_hist = load_history(is_nifty=False)
     if not s_hist.empty: st.dataframe(s_hist.style.apply(lambda x: ['background-color: #021a0d; color: #00ff66' if 'PROFIT' in str(val) else 'background-color: #1a0202; color: #ff3333' if 'LOSS' in str(val) else '' for val in x], subset=['Result']), use_container_width=True)
-    time.sleep(8) 
-    st.rerun()
 
 # ------------------------------------------------------------------------------
-# PAGE 3: SWING TRADING (3-4 Days)
+# TAB 3: SWING TRADING
 # ------------------------------------------------------------------------------
-elif menu == "🚀 SWING TRADING (3-4 Days)":
-    st.markdown("<h2 style='color:#f5f5f5;'>🚀 SWING TRADING RADAR (3-4 Days Target)</h2>", unsafe_allow_html=True)
-    st.write("यह इंजन 15 स्टॉक्स का डेली डेटा स्कैन कर रहा है। आपको साफ दिखेगा कि कौन सा स्टॉक क्यों रिजेक्ट हुआ।")
-    
+with tab3:
+    st.write("15 स्टॉक्स का डेली (1-Day) चार्ट स्कैन हो रहा है। (Target: 4%, SL: 2%)")
     swing_list = ["RELIANCE.NS", "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "TATAMOTORS.NS", 
                   "INFY.NS", "TCS.NS", "BAJFINANCE.NS", "BHARTIARTL.NS", "ITC.NS", 
                   "LT.NS", "M&M.NS", "MARUTI.NS", "SUNPHARMA.NS", "TATASTEEL.NS"]
     
-    with st.spinner("Scanning Daily Charts for 3-4 Days Momentum... Please wait."):
+    with st.spinner("Scanning Daily Charts... Please wait."):
         swing_results = scan_swing_stocks(swing_list)
         
     if swing_results:
         df_swing = pd.DataFrame(swing_results)
-        # STRONG BUY वाले रो (Row) को हरे रंग में हाईलाइट करें
         st.dataframe(df_swing.style.apply(lambda x: ['background-color: #021a0d; color: #00ff66; font-weight: bold' if 'STRONG BUY' in str(val) else '' for val in x], subset=['Action']), use_container_width=True)
-        st.info("✅ (Tick) का मतलब है कि स्टॉक ने उस शर्त को पास कर लिया है। ❌ (Cross) का मतलब है कि स्टॉक उस शर्त में फेल हो गया।")
-    else:
-        st.info("डेटा फ़ेच करने में कोई दिक्कत आई है। कृपया एक बार रिफ्रेश करें।")
+        st.info("✅ (Tick) का मतलब है कि शर्त पास हो गई। ❌ (Cross) का मतलब है कि स्टॉक उस शर्त में फेल हो गया।")
+
+# ==============================================================================
+# REFRESH LOGIC (8 SECONDS)
+# ==============================================================================
+time.sleep(8) 
+st.rerun()

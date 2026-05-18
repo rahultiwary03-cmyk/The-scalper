@@ -3,31 +3,28 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import time
 
 # ==============================================================================
-# 1. ADVANCED QUANT ENGINE V2.0 (50-PT TARGET, DELTA & REWARD SYSTEM)
+# 1. ADVANCED QUANT ENGINE V3.1 (CE/PE STRIKE CALCULATION & LIVE COMMANDS)
 # ==============================================================================
 def calculate_ai_v2(df, symbol):
-    # yfinance के मल्टी-इंडेक्स कॉलम की समस्या को ठीक करने के लिए
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
 
-    # कोर टेक्निकल इंडिकेटर्स
+    # Core Indicators
     df['EMA_20'] = df['Close'].ewm(span=20, adjust=False).mean()
     
-    # RSI कैलकुलेशन
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / (loss + 1e-10)
     df['RSI_14'] = 100 - (100 / (1 + rs))
 
-    # डायनेमिक स्टॉप लॉस के लिए ATR कैलकुलेशन
     high, low, close = df['High'].squeeze(), df['Low'].squeeze(), df['Close'].squeeze()
     tr = pd.concat([high - low, (high - close.shift(1)).abs(), (low - close.shift(1)).abs()], axis=1).max(axis=1)
     df['ATR_14'] = tr.rolling(window=14).mean()
 
-    # सुपरट्रेंड (Factor=3, Period=10)
     atr_10 = tr.rolling(window=10).mean()
     hl2 = (high + low) / 2
     f_ub = (hl2 + (3 * atr_10)).tolist()
@@ -43,29 +40,24 @@ def calculate_ai_v2(df, symbol):
         else: trend[i] = trend[i-1]
     df['Trend'] = trend
 
-    # एआई फील्ड्स को इनिशियलाइज करना
-    df['AI_Score'] = 0
-    df['Signal'] = 'WAIT ⏳'
-    df['Entry'] = 0.0
-    df['Target'] = 0.0
-    df['StopLoss'] = 0.0
-    df['Status'] = ""
+    df['AI_Score'], df['Signal'], df['Entry'], df['Target'], df['StopLoss'], df['Status'] = 0, 'WAIT ⏳', 0.0, 0.0, 0.0, ""
 
-    # लाइव ट्रेड स्टेट ट्रैकर (सिग्नल्स को मिस होने से बचाने के लिए)
     active_trade = None
+    trade_history = [] 
     
     for i in range(20, len(df)):
         score = 0
         curr_c = round(float(c_list[i]), 2)
         atr = df['ATR_14'].iloc[i]
+        timestamp = df.index[i].strftime("%H:%M")
         
-        # स्कोरिंग लॉजिक
-        if trend[i] == 1:  # CALL सेंटिमेंट
+        # Scoring
+        if trend[i] == 1: 
             score += 30
             if curr_c > df['EMA_20'].iloc[i]: score += 30
             if df['RSI_14'].iloc[i] > 60: score += 25
             if tr.iloc[i] > df['ATR_14'].iloc[i]: score += 15
-        else:  # PUT सेंटिमेंट
+        else:
             score += 30
             if curr_c < df['EMA_20'].iloc[i]: score += 30
             if df['RSI_14'].iloc[i] < 40: score += 25
@@ -73,184 +65,155 @@ def calculate_ai_v2(df, symbol):
             
         df.at[df.index[i], 'AI_Score'] = score
         
-        # एक्टिव ट्रेड और रिवॉर्ड मैनेजमेंट लॉजिक
+        # Trade Management & Logging
         if active_trade is not None:
             df.at[df.index[i], 'Signal'] = active_trade['Signal']
             df.at[df.index[i], 'Entry'] = active_trade['Entry']
             df.at[df.index[i], 'Target'] = active_trade['Target']
             df.at[df.index[i], 'StopLoss'] = active_trade['StopLoss']
             
-            if active_trade['Type'] == 'CALL':
+            trade_closed = False
+            status_msg = ""
+            if active_trade['Type'] == 'CE':
                 if curr_c >= active_trade['Target']:
-                    df.at[df.index[i], 'Status'] = "🏆 TARGET HIT (+50 PTS) 🏆"
-                    active_trade = None
+                    status_msg, trade_closed = "🎯 TARGET HIT (+50)", True
                 elif curr_c <= active_trade['StopLoss']:
-                    df.at[df.index[i], 'Status'] = "🛑 SL HIT (EXIT) 🛑"
-                    active_trade = None
-            elif active_trade['Type'] == 'PUT':
+                    status_msg, trade_closed = "🛑 SL HIT", True
+            elif active_trade['Type'] == 'PE':
                 if curr_c <= active_trade['Target']:
-                    df.at[df.index[i], 'Status'] = "🏆 TARGET HIT (+50 PTS) 🏆"
-                    active_trade = None
+                    status_msg, trade_closed = "🎯 TARGET HIT (+50)", True
                 elif curr_c >= active_trade['StopLoss']:
-                    df.at[df.index[i], 'Status'] = "🛑 SL HIT (EXIT) 🛑"
-                    active_trade = None
+                    status_msg, trade_closed = "🛑 SL HIT", True
+            
+            if trade_closed:
+                df.at[df.index[i], 'Status'] = status_msg
+                trade_history.append({
+                    "Time": timestamp,
+                    "Option Strike": active_trade['Option'],
+                    "Spot Entry": active_trade['Entry'],
+                    "Spot Exit": curr_c,
+                    "Spot Target": active_trade['Target'],
+                    "Result": status_msg
+                })
+                active_trade = None 
         else:
             if score >= 85:
+                # NAYA FEATURE: ATM Strike Price Calculator (Nearest 50)
+                atm_strike = int(round(curr_c / 50) * 50)
+                
                 if trend[i] == 1:
-                    sig = '🟢 AI CALL ACTION'
+                    opt_type = 'CE'
+                    sig = f'🟢 BUY NIFTY {atm_strike} CE'
                     tgt = curr_c + 50 if "NSEI" in symbol else curr_c + (2 * atr)
                     sl = curr_c - (1.2 * atr)
-                    active_trade = {'Type': 'CALL', 'Signal': sig, 'Entry': curr_c, 'Target': round(tgt, 2), 'StopLoss': round(sl, 2)}
                 else:
-                    sig = '🔴 AI PUT ACTION'
+                    opt_type = 'PE'
+                    sig = f'🔴 BUY NIFTY {atm_strike} PE'
                     tgt = curr_c - 50 if "NSEI" in symbol else curr_c - (2 * atr)
                     sl = curr_c + (1.2 * atr)
-                    active_trade = {'Type': 'PUT', 'Signal': sig, 'Entry': curr_c, 'Target': round(tgt, 2), 'StopLoss': round(sl, 2)}
+                
+                active_trade = {
+                    'Type': opt_type, 
+                    'Option': f'{atm_strike} {opt_type}',
+                    'Signal': sig, 
+                    'Entry': curr_c, 
+                    'Target': round(tgt, 2), 
+                    'StopLoss': round(sl, 2)
+                }
                 
                 df.at[df.index[i], 'Signal'] = active_trade['Signal']
                 df.at[df.index[i], 'Entry'] = active_trade['Entry']
                 df.at[df.index[i], 'Target'] = active_trade['Target']
                 df.at[df.index[i], 'StopLoss'] = active_trade['StopLoss']
 
-    return df
+    return df, trade_history, active_trade
 
 # ==============================================================================
-# 2. ULTRA-PROFESSIONAL UI SETUP (PURE DARK THEME)
+# 2. ULTRA-PROFESSIONAL UI SETUP
 # ==============================================================================
-st.set_page_config(page_title="Scalper Pro AI v2.0", layout="wide")
+st.set_page_config(page_title="Scalper Pro AI", layout="wide")
 
-# एडवांस डार्क थीम सीएसएस (सफेद साइडबार को पूरी तरह डार्क करने के लिए)
 st.markdown("""
     <style>
     .stApp { background-color: #05070a; color: #ffffff; }
-    
-    /* साइडबार का कम्प्लीट डार्क लुक */
     [data-testid="stSidebar"] { background-color: #090d16 !important; border-right: 1px solid #1f293d !important; }
     [data-testid="stSidebar"] * { color: #f5f5f5 !important; }
-    
-    /* डिफ़ॉल्ट स्ट्रीमलिट हेडर और फुटर को छिपाना */
     #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
-    
-    /* लाइव मेट्रिक्स की स्टाइलिंग */
     div[data-testid="stMetricValue"] { font-size: 38px; font-weight: 700; color: #00ffff; }
     
-    /* रिवॉर्ड और स्टेटस बैज */
-    .reward-box { padding: 22px; border-radius: 12px; text-align: center; font-weight: bold; font-size: 24px; border: 2px solid; margin-bottom: 20px; }
-    .target-hit { background-color: #021a0d; color: #00ff66; border-color: #00ff66; box-shadow: 0 0 20px rgba(0, 255, 102, 0.4); }
-    .sl-hit { background-color: #1a0202; color: #ff3333; border-color: #ff3333; box-shadow: 0 0 20px rgba(255, 51, 51, 0.4); }
-    .wait-box { background-color: #0c111d; color: #8b949e; border-color: #1f293d; border-style: dashed; }
-    
-    /* सिग्नल कार्ड्स */
-    .signal-card { border-left: 10px solid; padding: 20px; background: #0c111d; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+    .command-box { padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 26px; border: 3px solid; margin-bottom: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+    .cmd-wait { background-color: #111827; color: #8b949e; border-color: #1f293d; }
+    .cmd-hold { background-color: #3d2600; color: #ffaa00; border-color: #ffaa00; }
+    .cmd-buy-c { background-color: #021a0d; color: #00ff66; border-color: #00ff66; }
+    .cmd-buy-p { background-color: #1a0202; color: #ff3333; border-color: #ff3333; }
     </style>
     """, unsafe_allow_html=True)
 
-# ऑडियो अलर्ट के लिए बीप साउंड (प्रीमियम एक्सपीरियंस)
-beep_sound = '<audio autoplay><source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-500.wav" type="audio/wav"></audio>'
-
-# साइडबार ब्रांडिंग
-st.sidebar.markdown("<h2 style='text-align: center; font-weight: 700;'>SCALPER PRO <br><span style='color:#deff9a;'>AI v2.0</span></h2>", unsafe_allow_html=True)
+st.sidebar.markdown("<h2 style='text-align: center; font-weight: 700;'>SCALPER PRO <br><span style='color:#deff9a;'>AI v3.1</span></h2>", unsafe_allow_html=True)
 st.sidebar.markdown("<hr style='border-color:#1f293d;'>", unsafe_allow_html=True)
-menu = st.sidebar.radio("Navigation Menu", ["⚡ LIVE NIFTY STATION", "📡 MOMENTUM RADAR"])
+menu = st.sidebar.radio("Navigation Menu", ["⚡ LIVE NIFTY STATION"])
 
-# ------------------------------------------------------------------------------
-# पेज 1: लाइव निफ्टी स्टेशन
-# ------------------------------------------------------------------------------
 if menu == "⚡ LIVE NIFTY STATION":
     st.markdown("<h2 style='color:#f5f5f5;'>⚡ NIFTY 50 AI QUANT STATION</h2>", unsafe_allow_html=True)
     
     data = yf.download('^NSEI', period='1d', interval='1m', progress=False)
     if not data.empty:
-        df = calculate_ai_v2(data, '^NSEI')
+        df, trade_history, active_trade = calculate_ai_v2(data, '^NSEI')
         last = df.iloc[-1]
         
         curr_p = round(float(df['Close'].iloc[-1]), 2)
         open_p = round(float(df['Open'].iloc[0]), 2)
         points_change = round(curr_p - open_p, 2)
-        pct_change = round((points_change / open_p) * 100, 2)
-        score = last['AI_Score']
         
-        # लाइव पॉइंट्स (Delta) के साथ टॉप रो लेआउट
+        # ---------------------------------------------------------
+        # COMMAND CENTER: CE/PE Strike Recommendations
+        # ---------------------------------------------------------
+        if active_trade is not None:
+            cmd_class = "cmd-hold"
+            cmd_text = f"⏳ HOLD POSITION : [{active_trade['Option']}] abhi active hai. Spot Target (₹{active_trade['Target']}) ka wait karein."
+        elif last['AI_Score'] >= 85:
+            cmd_class = "cmd-buy-c" if "CE" in last['Signal'] else "cmd-buy-p"
+            cmd_text = f"🚀 {last['Signal']} NOW! Entry lein."
+        else:
+            cmd_class = "cmd-wait"
+            cmd_text = "✋ WAIT : Market No-Trade Zone mein hai. AI Breakout ka wait karein."
+            
+        st.markdown(f'<div class="command-box {cmd_class}">{cmd_text}</div>', unsafe_allow_html=True)
+        # ---------------------------------------------------------
+
         c1, c2 = st.columns([1, 2])
-        
-        # बिल्कुल ज़ेरोधा की तरह हरा/लाल सिंबल और लाइव पॉइंट दिखाना
         sign = "+" if points_change >= 0 else ""
-        c1.metric(
-            label="📊 NIFTY 50 INDEX", 
-            value=f"₹{curr_p:,}", 
-            delta=f"{sign}{points_change} pts ({sign}{pct_change}%) Today"
-        )
+        c1.metric(label="📊 NIFTY 50 SPOT", value=f"₹{curr_p:,}", delta=f"{sign}{points_change} pts Today")
         
         with c2:
-            # रियल-टाइम रिवॉर्ड / एग्जिट बैज लॉजिक
-            if last['Status'] != "":
-                is_tgt = "TARGET" in last['Status']
-                style_class = "target-hit" if is_tgt else "sl-hit"
-                st.markdown(f'<div class="reward-box {style_class}">{last["Status"]}</div>', unsafe_allow_html=True)
-                st.markdown(beep_sound, unsafe_allow_html=True)
-            elif score >= 85:
-                st.markdown(beep_sound, unsafe_allow_html=True)
-                color = "#00ff66" if "CALL" in last['Signal'] else "#ff3333"
+            if active_trade is not None:
+                color = "#00ff66" if active_trade['Type'] == 'CE' else "#ff3333"
                 st.markdown(f"""
-                <div class="signal-card" style="border-color:{color};">
-                    <h2 style="margin:0; color:{color};">{last['Signal']} ({score}% CONFIDENCE)</h2>
-                    <p style="font-size:22px; margin:10px 0; color:#f5f5f5;">
-                        <b>ENTRY:</b> ₹{last['Entry']} | 
-                        <span style="color:#00ff66;"><b>🎯 TARGET:</b> ₹{last['Target']}</span> | 
-                        <span style="color:#ff3333;"><b>🛑 SL:</b> ₹{last['StopLoss']}</span>
-                    </p>
+                <div style="border-left: 8px solid {color}; padding: 15px; background: #0c111d; border-radius: 8px;">
+                    <h3 style="margin:0; color:{color};">⚡ ACTION: {active_trade['Signal']}</h3>
+                    <p style="font-size:20px; margin:5px 0; color:#f5f5f5;"><b>SPOT ENTRY:</b> ₹{active_trade['Entry']} | <span style="color:#00ff66;"><b>🎯 SPOT TARGET:</b> ₹{active_trade['Target']}</span> | <span style="color:#ff3333;"><b>🛑 SPOT SL:</b> ₹{active_trade['StopLoss']}</span></p>
                 </div>
                 """, unsafe_allow_html=True)
-            else:
-                st.markdown('<div class="reward-box wait-box">⏳ AI ENGINE STATUS: MONITORING 85% INSTITUTIONAL BREAKOUT ZONE...</div>', unsafe_allow_html=True)
+            elif last['Status'] != "":
+                st.info(f"Last Action: {last['Status']}")
 
-        # लाइव कैंडलस्टिक/लाइन चार्ट
+        # Chart
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='Live Price', line=dict(color='#00ffff', width=2.5)))
-        fig.add_trace(go.Scatter(x=df.index, y=df['EMA_20'], name='20 EMA Trend', line=dict(color='#ffaa00', width=1.5, dash='dot')))
-        
-        fig.update_layout(
-            template='plotly_dark', 
-            paper_bgcolor='#05070a', 
-            plot_bgcolor='#05070a', 
-            height=460,
-            margin=dict(l=10, r=10, t=20, b=10),
-            xaxis=dict(showgrid=False),
-            yaxis=dict(showgrid=True, gridcolor='#1f293d')
-        )
+        fig.add_trace(go.Scatter(x=df.index, y=df['EMA_20'], name='20 EMA', line=dict(color='#ffaa00', width=1.5, dash='dot')))
+        fig.update_layout(template='plotly_dark', paper_bgcolor='#05070a', plot_bgcolor='#05070a', height=400, margin=dict(l=10, r=10, t=10, b=10))
         st.plotly_chart(fig, use_container_width=True)
 
-# ------------------------------------------------------------------------------
-# पेज 2: मोमेंटम राडार (स्टॉक्स के लिए)
-# ------------------------------------------------------------------------------
-else:
-    st.markdown("<h2 style='color:#f5f5f5;'>📡 LIVE STOCK MOMENTUM RADAR</h2>", unsafe_allow_html=True)
-    watchlist = ["RELIANCE.NS", "SBIN.NS", "TATAMOTORS.NS", "TCS.NS", "HDFCBANK.NS"]
-    
-    grid_data = []
-    for stock in watchlist:
-        s_data = yf.download(stock, period='1d', interval='1m', progress=False)
-        if not s_data.empty:
-            s_df = calculate_ai_v2(s_data, stock)
-            s_last = s_df.iloc[-1]
-            if s_last['AI_Score'] >= 85:
-                grid_data.append({
-                    "Stock Asset": stock.replace(".NS",""),
-                    "Current Price": f"₹{round(float(s_data['Close'].iloc[-1]), 2):,}",
-                    "AI Strength": f"{s_last['AI_Score']}%",
-                    "Direction": s_last['Signal'],
-                    "Trigger Entry": f"₹{s_last['Entry']}",
-                    "Target Move": f"₹{s_last['Target']}",
-                    "Risk StopLoss": f"₹{s_last['StopLoss']}"
-                })
-    
-    if grid_data:
-        st.dataframe(pd.DataFrame(grid_data), use_container_width=True)
-    else:
-        st.info("No high-conviction (>85%) institutional breakout stocks found in the radar at this moment.")
-        # ------------------------------------------------------------------------------
-# 3. AUTO-REFRESH SYSTEM (LIVE TICK SYNC)
-# ------------------------------------------------------------------------------
-import time
-time.sleep(60)  # 60 सेकंड (1 मिनट) का वेट करेगा
-st.rerun()      # फिर बिना माउस छुए पेज को अपने आप रीफ्रेश कर देगा
+        # ---------------------------------------------------------
+        # TODAY'S TRADE HISTORY
+        # ---------------------------------------------------------
+        st.markdown("<h3 style='color:#deff9a; margin-top:20px;'>📖 Options Trade Log (Spot Basis)</h3>", unsafe_allow_html=True)
+        if len(trade_history) > 0:
+            history_df = pd.DataFrame(trade_history)
+            st.dataframe(history_df, use_container_width=True)
+        else:
+            st.write("Abhi tak aaj ka koi trade close nahi hua hai.")
+
+# Auto Refresh Every 60 Seconds
+time.sleep(60)
+st.rerun()

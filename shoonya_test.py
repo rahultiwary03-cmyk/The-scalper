@@ -5,10 +5,9 @@ import numpy as np
 import plotly.graph_objects as go
 import time
 import os
-from datetime import timedelta
 
 # ==============================================================================
-# 1. TRADE HISTORY LOGGERS
+# 1. TRADE HISTORY LOGGERS (Auto-Healing)
 # ==============================================================================
 NIFTY_HISTORY_FILE = "nifty_trade_book.csv"
 STOCK_HISTORY_FILE = "stock_trade_book.csv"
@@ -42,22 +41,21 @@ def load_history(is_nifty=False):
     return pd.DataFrame()
 
 # ==============================================================================
-# 2. INTRADAY QUANT ENGINE (v11.0 - ULTRA STRICT FILTERS)
+# 2. INTRADAY QUANT ENGINE (Smart Money Filter)
 # ==============================================================================
 def calculate_intraday(df, symbol):
     if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
 
-    # Core EMAs
     df['EMA_9'] = df['Close'].ewm(span=9, adjust=False).mean()
     df['EMA_21'] = df['Close'].ewm(span=21, adjust=False).mean()
-    df['EMA_200'] = df['Close'].ewm(span=200, adjust=False).mean() # MAJOR TREND
+    df['EMA_200'] = df['Close'].ewm(span=200, adjust=False).mean()
     
     if 'Volume' in df.columns and df['Volume'].sum() > 0:
         df['Typical_Price'] = (df['High'] + df['Low'] + df['Close']) / 3
         df['Cumulative_VP'] = (df['Typical_Price'] * df['Volume']).cumsum()
         df['Cumulative_Vol'] = df['Volume'].cumsum()
         df['Baseline'] = df['Cumulative_VP'] / (df['Cumulative_Vol'] + 1e-10) 
-        df['Vol_Avg'] = df['Volume'].rolling(20).mean() # 20 Min Volume Avg
+        df['Vol_Avg'] = df['Volume'].rolling(20).mean() 
     else:
         df['Baseline'] = df['Close'].ewm(span=50, adjust=False).mean() 
         df['Vol_Avg'] = 1
@@ -72,7 +70,7 @@ def calculate_intraday(df, symbol):
     active_trade = None
     is_nifty = "NSEI" in symbol
     
-    start_idx = 200 if len(df) > 200 else 20 # Need 200 candles for EMA 200
+    start_idx = 200 if len(df) > 200 else 20 
     for i in range(start_idx, len(df)):
         score = 0
         curr_c = round(float(df['Close'].iloc[i]), 2)
@@ -84,22 +82,15 @@ def calculate_intraday(df, symbol):
         ist_time = candle_time.tz_convert('Asia/Kolkata')
         timestamp = ist_time.strftime("%d-%b %I:%M %p")
         
-        # 🚀 VOLUME SURGE CHECK (Smart Money)
         vol_surge = True
         if 'Volume' in df.columns and df['Volume'].sum() > 0:
-            current_vol = float(df['Volume'].iloc[i])
-            avg_vol = float(df['Vol_Avg'].iloc[i])
-            vol_surge = current_vol > (1.5 * avg_vol) # Volume must be 150% of average
+            vol_surge = float(df['Volume'].iloc[i]) > (1.5 * float(df['Vol_Avg'].iloc[i]))
         
-        # 🛡️ STRICT INSTITUTIONAL SCORING
-        # Buy Setup: Above 200 EMA + Above VWAP + 9/21 Crossover
         if df['EMA_9'].iloc[i] > df['EMA_21'].iloc[i] and curr_c > baseline_val and curr_c > ema200_val:
             score += 40  
             if df['RSI_14'].iloc[i] >= 60: score += 25
             if vol_surge: score += 35
             trend_dir = 1
-            
-        # Sell Setup: Below 200 EMA + Below VWAP + 9/21 Crossunder
         elif df['EMA_9'].iloc[i] < df['EMA_21'].iloc[i] and curr_c < baseline_val and curr_c < ema200_val:
             score += 40 
             if df['RSI_14'].iloc[i] <= 40: score += 25
@@ -141,7 +132,6 @@ def calculate_intraday(df, symbol):
                 save_trade(trade_data, is_nifty=is_nifty)
                 active_trade = None 
         else:
-            # Must score 100% for Stocks (Trend + RSI + Volume). Nifty can trigger at 85+.
             trigger_score = 85 if is_nifty else 95 
             
             if score >= trigger_score and trend_dir != 0:
@@ -166,7 +156,7 @@ def calculate_intraday(df, symbol):
     return df, active_trade
 
 # ==============================================================================
-# 3. SWING TRADING ENGINE (3-4 Days)
+# 3. SWING TRADING ENGINE
 # ==============================================================================
 def scan_swing_stocks(tickers):
     results = []
@@ -178,12 +168,7 @@ def scan_swing_stocks(tickers):
             
             df['EMA_20'] = df['Close'].ewm(span=20, adjust=False).mean()
             df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
-            
-            delta = df['Close'].diff()
-            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-            rs = gain / (loss + 1e-10)
-            df['RSI'] = 100 - (100 / (1 + rs))
+            df['RSI'] = 100 - (100 / (1 + (df['Close'].diff().where(df['Close'].diff() > 0, 0).rolling(14).mean() / (-df['Close'].diff().where(df['Close'].diff() < 0, 0).rolling(14).mean() + 1e-10))))
             df['Vol_Avg'] = df['Volume'].rolling(20).mean()
             
             last = df.iloc[-1]
@@ -209,9 +194,9 @@ def scan_swing_stocks(tickers):
     return results
 
 # ==============================================================================
-# 4. UI SETUP
+# 4. UI SETUP (4 TABS)
 # ==============================================================================
-st.set_page_config(page_title="Scalper Pro AI v11.0", layout="wide")
+st.set_page_config(page_title="Scalper Pro AI v11.1", layout="wide")
 audio_code = """<audio id="alert-sound" autoplay><source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-500.wav" type="audio/wav"></audio>"""
 
 st.markdown("""
@@ -219,13 +204,10 @@ st.markdown("""
     .stApp { background-color: #05070a; color: #ffffff; }
     #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
     div[data-testid="stMetricValue"] { font-size: 38px; font-weight: 700; color: #00ffff; }
-    
     [data-testid="collapsedControl"] { display: none; }
-    
     .stTabs [data-baseweb="tab-list"] { gap: 10px; }
     .stTabs [data-baseweb="tab"] { background-color: #090d16; border-radius: 10px 10px 0 0; border: 1px solid #1f293d; border-bottom: none; padding: 10px 20px; font-size: 18px; font-weight: bold; }
     .stTabs [aria-selected="true"] { background-color: #1f293d; color: #deff9a !important; border-bottom: 2px solid #deff9a; }
-    
     .command-box { padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 26px; border: 3px solid; margin-bottom: 20px; }
     .cmd-wait { background-color: #111827; color: #8b949e; border-color: #1f293d; }
     .cmd-hold { background-color: #3d2600; color: #ffaa00; border-color: #ffaa00; }
@@ -237,7 +219,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.markdown("<h2 style='text-align: center; font-weight: 700;'>SCALPER PRO <span style='color:#deff9a;'>AI v11.0</span></h2>", unsafe_allow_html=True)
+st.markdown("<h2 style='text-align: center; font-weight: 700;'>SCALPER PRO <span style='color:#deff9a;'>AI v11.1</span></h2>", unsafe_allow_html=True)
 st.markdown("<hr style='border-color:#1f293d;'>", unsafe_allow_html=True)
 
 tab1, tab2, tab3, tab4 = st.tabs(["⚡ NIFTY OPTIONS", "📡 INTRADAY STOCKS", "🚀 SWING TRADING", "👨‍💻 ABOUT CREATOR"])
@@ -313,8 +295,6 @@ with tab1:
             n_hist = load_history(is_nifty=True)
             if not n_hist.empty: 
                 st.dataframe(n_hist.style.apply(lambda x: ['background-color: #021a0d; color: #00ff66; font-weight: bold' if 'PROFIT' in str(val) else 'background-color: #1a0202; color: #ff3333; font-weight: bold' if 'LOSS' in str(val) else '' for val in x], subset=['Result']), use_container_width=True, hide_index=True)
-            else:
-                st.write("Abhi tak koi naya trade log nahi hua hai.")
     except Exception as e:
         st.error(f"Error: {e}")
 

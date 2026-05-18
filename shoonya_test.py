@@ -5,9 +5,10 @@ import numpy as np
 import plotly.graph_objects as go
 import time
 import os
+from datetime import timedelta
 
 # ==============================================================================
-# 1. TRADE HISTORY LOGGERS
+# 1. ADVANCED TRADE HISTORY LOGGERS (Detailed & IST Time)
 # ==============================================================================
 NIFTY_HISTORY_FILE = "nifty_trade_book.csv"
 STOCK_HISTORY_FILE = "stock_trade_book.csv"
@@ -19,7 +20,8 @@ def save_trade(trade_data, is_nifty=False):
         df.to_csv(filename, index=False)
     else:
         existing = pd.read_csv(filename)
-        is_duplicate = ((existing['Time'] == trade_data['Time']) & (existing['Asset'] == trade_data['Asset'])).any()
+        # Duplicate check based on Time and Asset
+        is_duplicate = ((existing['Time (IST)'] == trade_data['Time (IST)']) & (existing['Asset'] == trade_data['Asset'])).any()
         if not is_duplicate:
             df.to_csv(filename, mode='a', header=False, index=False)
 
@@ -61,7 +63,13 @@ def calculate_intraday(df, symbol):
         score = 0
         curr_c = round(float(df['Close'].iloc[i]), 2)
         baseline_val = float(df['Baseline'].iloc[i])
-        timestamp = df.index[i].strftime("%d-%b %H:%M")
+        
+        # 🕒 Indian Time (IST) Fix
+        candle_time = df.index[i]
+        if candle_time.tz is None:
+            candle_time = candle_time.tz_localize('UTC')
+        ist_time = candle_time.tz_convert('Asia/Kolkata')
+        timestamp = ist_time.strftime("%d-%b %I:%M %p")
         
         # Crossover Logic
         if df['EMA_9'].iloc[i] > df['EMA_21'].iloc[i] and curr_c > baseline_val:
@@ -95,7 +103,17 @@ def calculate_intraday(df, symbol):
             
             if trade_closed:
                 df.at[df.index[i], 'Status'] = status_msg
-                trade_data = {"Time": timestamp, "Asset": "NIFTY 50" if is_nifty else symbol.replace(".NS", ""), "Type": active_trade['Type'], "Entry Price": active_trade['Entry'], "Exit Price": curr_c, "Result": status_msg}
+                # 📝 NEW DETAILED LOG FORMAT
+                trade_data = {
+                    "Time (IST)": timestamp, 
+                    "Asset": "NIFTY 50" if is_nifty else symbol.replace(".NS", ""), 
+                    "Action/Strike": active_trade['Type'], 
+                    "Spot Entry (₹)": active_trade['Entry'], 
+                    "Spot Exit (₹)": curr_c, 
+                    "Spot Target (₹)": active_trade['Target'],
+                    "Spot SL (₹)": active_trade['StopLoss'],
+                    "Result": status_msg
+                }
                 save_trade(trade_data, is_nifty=is_nifty)
                 active_trade = None 
         else:
@@ -164,9 +182,9 @@ def scan_swing_stocks(tickers):
     return results
 
 # ==============================================================================
-# 4. UI SETUP (TABS INSTEAD OF SIDEBAR)
+# 4. UI SETUP
 # ==============================================================================
-st.set_page_config(page_title="Scalper Pro AI v9.0", layout="wide")
+st.set_page_config(page_title="Scalper Pro AI v10.0", layout="wide")
 audio_code = """<audio id="alert-sound" autoplay><source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-500.wav" type="audio/wav"></audio>"""
 
 st.markdown("""
@@ -175,10 +193,8 @@ st.markdown("""
     #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
     div[data-testid="stMetricValue"] { font-size: 38px; font-weight: 700; color: #00ffff; }
     
-    /* Hide default sidebar entirely */
     [data-testid="collapsedControl"] { display: none; }
     
-    /* Styling for Tabs to look like Buttons */
     .stTabs [data-baseweb="tab-list"] { gap: 10px; }
     .stTabs [data-baseweb="tab"] { background-color: #090d16; border-radius: 10px 10px 0 0; border: 1px solid #1f293d; border-bottom: none; padding: 10px 20px; font-size: 18px; font-weight: bold; }
     .stTabs [aria-selected="true"] { background-color: #1f293d; color: #deff9a !important; border-bottom: 2px solid #deff9a; }
@@ -194,11 +210,10 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.markdown("<h2 style='text-align: center; font-weight: 700;'>SCALPER PRO <span style='color:#deff9a;'>AI v9.0</span></h2>", unsafe_allow_html=True)
+st.markdown("<h2 style='text-align: center; font-weight: 700;'>SCALPER PRO <span style='color:#deff9a;'>AI v10.0</span></h2>", unsafe_allow_html=True)
 st.markdown("<hr style='border-color:#1f293d;'>", unsafe_allow_html=True)
 
-# 🚀 NAYA FEATURE: TOP MENU TABS (सामने ही बटन दिखेंगे)
-tab1, tab2, tab3 = st.tabs(["⚡ NIFTY OPTIONS", "📡 INTRADAY STOCKS", "🚀 SWING TRADING (3-4 Days)"])
+tab1, tab2, tab3, tab4 = st.tabs(["⚡ NIFTY OPTIONS", "📡 INTRADAY STOCKS", "🚀 SWING TRADING", "👨‍💻 ABOUT CREATOR"])
 
 # ------------------------------------------------------------------------------
 # TAB 1: NIFTY OPTIONS
@@ -237,7 +252,6 @@ with tab1:
             
             with c3:
                 if active_trade is not None:
-                    # 🚀 NAYA FEATURE: DYNAMIC COLOR FILL (Progress Bar Background)
                     entry_p = active_trade['Entry']
                     target_p = active_trade['Target']
                     
@@ -246,12 +260,10 @@ with tab1:
                     else:
                         progress_pct = ((entry_p - curr_p) / (entry_p - target_p)) * 100 if entry_p > target_p else 0
                         
-                    progress_pct = max(0, min(100, progress_pct)) # 0% से 100% के बीच रखें
+                    progress_pct = max(0, min(100, progress_pct)) 
                     
                     color = "#00ff66" if active_trade['Direction'] == 'LONG' else "#ff3333"
                     bg_color_fill = f"rgba(0, 255, 102, 0.3)" if active_trade['Direction'] == 'LONG' else f"rgba(255, 51, 51, 0.3)"
-                    
-                    # CSS Magic for filling background
                     bg_style = f"background: linear-gradient(90deg, {bg_color_fill} {progress_pct}%, #0c111d {progress_pct}%);"
                     
                     st.markdown(f"""
@@ -270,9 +282,13 @@ with tab1:
             fig.update_layout(template='plotly_dark', paper_bgcolor='#05070a', plot_bgcolor='#05070a', height=400, margin=dict(l=0, r=0, t=10, b=0))
             st.plotly_chart(fig, use_container_width=True)
             
-            st.markdown("<hr style='border-color:#1f293d;'><h3 style='color:#deff9a;'>📖 NIFTY OPTIONS LOG</h3>", unsafe_allow_html=True)
+            st.markdown("<hr style='border-color:#1f293d;'><h3 style='color:#deff9a;'>📖 NIFTY OPTIONS LOG (Spot Basis)</h3>", unsafe_allow_html=True)
             n_hist = load_history(is_nifty=True)
-            if not n_hist.empty: st.dataframe(n_hist.style.apply(lambda x: ['background-color: #021a0d; color: #00ff66' if 'PROFIT' in str(val) else 'background-color: #1a0202; color: #ff3333' if 'LOSS' in str(val) else '' for val in x], subset=['Result']), use_container_width=True)
+            if not n_hist.empty: 
+                # Better DataFrame Display
+                st.dataframe(n_hist.style.apply(lambda x: ['background-color: #021a0d; color: #00ff66; font-weight: bold' if 'PROFIT' in str(val) else 'background-color: #1a0202; color: #ff3333; font-weight: bold' if 'LOSS' in str(val) else '' for val in x], subset=['Result']), use_container_width=True, hide_index=True)
+            else:
+                st.write("Abhi tak koi trade close nahi hua hai.")
     except Exception as e:
         st.error(f"Error: {e}")
 
@@ -298,7 +314,6 @@ with tab2:
                         color_cls = "card-buy" if s_trade['Direction'] == 'LONG' else "card-sell"
                         t_col = "#00ff66" if s_trade['Direction'] == 'LONG' else "#ff3333"
                         
-                        # Live Fill for Stocks too
                         entry_p = s_trade['Entry']
                         target_p = s_trade['Target']
                         if s_trade['Direction'] == 'LONG': prog = ((curr_p - entry_p) / (target_p - entry_p)) * 100 if target_p > entry_p else 0
@@ -331,7 +346,8 @@ with tab2:
     
     st.markdown("<hr style='border-color:#1f293d;'><h3 style='color:#deff9a;'>📖 STOCK TRADE LOG</h3>", unsafe_allow_html=True)
     s_hist = load_history(is_nifty=False)
-    if not s_hist.empty: st.dataframe(s_hist.style.apply(lambda x: ['background-color: #021a0d; color: #00ff66' if 'PROFIT' in str(val) else 'background-color: #1a0202; color: #ff3333' if 'LOSS' in str(val) else '' for val in x], subset=['Result']), use_container_width=True)
+    if not s_hist.empty: 
+        st.dataframe(s_hist.style.apply(lambda x: ['background-color: #021a0d; color: #00ff66; font-weight: bold' if 'PROFIT' in str(val) else 'background-color: #1a0202; color: #ff3333; font-weight: bold' if 'LOSS' in str(val) else '' for val in x], subset=['Result']), use_container_width=True, hide_index=True)
 
 # ------------------------------------------------------------------------------
 # TAB 3: SWING TRADING
@@ -347,8 +363,47 @@ with tab3:
         
     if swing_results:
         df_swing = pd.DataFrame(swing_results)
-        st.dataframe(df_swing.style.apply(lambda x: ['background-color: #021a0d; color: #00ff66; font-weight: bold' if 'STRONG BUY' in str(val) else '' for val in x], subset=['Action']), use_container_width=True)
-        st.info("✅ (Tick) का मतलब है कि शर्त पास हो गई। ❌ (Cross) का मतलब है कि स्टॉक उस शर्त में फेल हो गया।")
+        st.dataframe(df_swing.style.apply(lambda x: ['background-color: #021a0d; color: #00ff66; font-weight: bold' if 'STRONG BUY' in str(val) else '' for val in x], subset=['Action']), use_container_width=True, hide_index=True)
+
+# ------------------------------------------------------------------------------
+# TAB 4: ABOUT CREATOR
+# ------------------------------------------------------------------------------
+with tab4:
+    st.markdown("<h2 style='color:#deff9a; text-align:center;'>👨‍💻 Meet The Quant Developer</h2>", unsafe_allow_html=True)
+    st.markdown("<hr style='border-color:#1f293d;'>", unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1, 2, 1]) 
+    
+    with col2:
+        try:
+            st.markdown("""
+                <style>
+                .profile-img { border-radius: 50%; display: block; margin-left: auto; margin-right: auto; border: 4px solid #deff9a; box-shadow: 0 4px 15px rgba(222, 255, 154, 0.3); }
+                </style>
+            """, unsafe_allow_html=True)
+            st.image("photo.jpg", width=250, output_format="JPEG")
+        except:
+            st.info("💡 Tip: GitHub पर 'photo.jpg' नाम से अपनी फोटो अपलोड करें।")
+        
+        st.markdown("""
+        <div style='text-align: center; margin-top: 20px;'>
+            <h1 style='color:#f5f5f5; font-size: 40px; margin-bottom: 5px;'>[अपना नाम यहाँ लिखें]</h1>
+            <h3 style='color:#00ffff; margin-top: 0;'>Algo Trader & System Architect</h3>
+            <p style='color:#8b949e; font-size: 18px; margin-top: 15px;'>
+                मैंने इस एडवांस <strong>Scalper Pro AI</strong> को प्योर मोमेंटम और इंस्टीटूशनल डेटा (VWAP & EMA) को डिकोड करने के लिए बनाया है। यह सिस्टम भावनाओं को हटाकर 100% गणितीय सटीकता पर काम करता है।
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("""
+        <div style='background-color: #0c111d; padding: 20px; border-radius: 10px; border: 1px solid #1f293d; margin-top: 20px;'>
+            <h4 style='color:#deff9a; margin-bottom: 15px;'>🔗 Connect For Mentorship & Services:</h4>
+            <ul style='list-style-type: none; padding-left: 0; font-size: 18px; line-height: 2;'>
+                <li>📺 <b>YouTube:</b> <a href="https://youtube.com/c/TechVantageHindi" target="_blank" style="color:#00ff66; text-decoration:none;">TechVantageHindi</a></li>
+                <li>📱 <b>Telegram:</b> <a href="https://t.me/AapkaTelegramID" target="_blank" style="color:#00ff66; text-decoration:none;">@JoinMyChannel</a></li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
 
 # ==============================================================================
 # REFRESH LOGIC (8 SECONDS)

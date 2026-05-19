@@ -14,11 +14,11 @@ import pytz
 SHOONYA_UID = "FN209492" # अपना User ID
 SHOONYA_PWD = "Rahul@1995" # अपना पासवर्ड
 SHOONYA_API_KEY = "3007acd3cd50a75e4e8eb1bfc0e1459a" # Prism वाली API Key
-SHOONYA_VC = "FN209492_U" # Vendor Code (आमतौर पर UserID के आगे _U लगा होता है)
+SHOONYA_VC = "FN209492_U" # Vendor Code
 SHOONYA_TOTP_SECRET = "666J4TSFQRM624X75B6WZ32PMUH3477P" # QR कोड के नीचे वाला लंबा Secret Code
 
 # ==============================================================================
-# 2. SHOONYA LIVE DATA ENGINE (With Error Diagnostic)
+# 2. SHOONYA LIVE DATA ENGINE 
 # ==============================================================================
 try:
     import pyotp
@@ -44,7 +44,6 @@ def shoonya_login():
         if res.get('stat') == 'Ok': 
             return res.get('susertoken'), "Success"
         else:
-            # 🔴 यह लाइन हमें असली एरर बताएगी
             return None, res.get('emsg', 'Unknown Shoonya Error')
     except Exception as e: 
         return None, f"Code Error: {str(e)}"
@@ -64,7 +63,7 @@ SH_TOKENS = {'^NSEI': '26000', 'RELIANCE.NS': '2885', 'HDFCBANK.NS': '1333', 'IC
 # ==============================================================================
 # 3. CORE CONFIGURATION & THEME
 # ==============================================================================
-st.set_page_config(page_title="Scalper Pro AI v16.1", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Scalper Pro AI v16.2", layout="wide", initial_sidebar_state="collapsed")
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
@@ -82,10 +81,8 @@ st.markdown("""
     """, unsafe_allow_html=True)
 audio_code = """<audio id="alert-sound" autoplay><source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-500.wav" type="audio/wav"></audio>"""
 
-# ==============================================================================
-# SHOONYA LOGIN SESSION
-# ==============================================================================
-if 'shoonya_token' not in st.session_state:
+# 🚀 BUG FIX: Bulletproof Session Management
+if 'shoonya_token' not in st.session_state or 'shoonya_msg' not in st.session_state:
     token, msg = shoonya_login()
     st.session_state.shoonya_token = token
     st.session_state.shoonya_msg = msg
@@ -226,11 +223,11 @@ with col_h1:
     if st.session_state.shoonya_token:
         sh_status = "<span style='color:#00ff66; font-size:14px;'>🟢 Shoonya Live API Linked</span>"
     else:
-        # 🔴 THIS WILL SHOW THE EXACT ERROR WHY SHOONYA FAILED
-        err_msg = st.session_state.shoonya_msg
+        # 🚀 BUG FIX: Safe retrieval of error message
+        err_msg = st.session_state.get('shoonya_msg', 'Check Credentials/PyOTP')
         sh_status = f"<span style='color:#ff3333; font-size:14px;'>🔴 Shoonya Failed: {err_msg}</span>"
         
-    st.markdown(f"<h1 style='margin:0; font-weight:800; color:#e3e9f0;'>QUANT<span style='color:#deff9a;'>SCALPER AI</span> v16.1 <br>{sh_status}</h1>", unsafe_allow_html=True)
+    st.markdown(f"<h1 style='margin:0; font-weight:800; color:#e3e9f0;'>QUANT<span style='color:#deff9a;'>SCALPER AI</span> v16.2 <br>{sh_status}</h1>", unsafe_allow_html=True)
 with col_h2:
     tz_ist = pytz.timezone('Asia/Kolkata'); now = datetime.datetime.now(tz_ist)
     market_status = "CLOSED" if now.hour >= 16 or now.hour < 9 or (now.hour==15 and now.minute>=30) else "LIVE"
@@ -261,7 +258,7 @@ with tab1:
 
             col_met1, col_met2 = st.columns([1, 2])
             with col_met1:
-                source_txt = "Shoonya Live API" if st.session_state.shoonya_token else "YFinance"
+                source_txt = "Shoonya Live" if st.session_state.shoonya_token else "YFinance"
                 st.metric(f"NIFTY SPOT ({source_txt})", f"₹{curr_p:,}", f"{pts} pts")
                 st.markdown(f"<div style='background:#14181f; padding:10px; border-radius:8px; border:1px solid #2d3748;'>TREND (ADX): <span style='color:{'#00ff66' if adx>=25 else '#ff3333'}; font-weight:700;'>{round(adx,1)} ({'Trending' if adx>=25 else 'Chop Zone'})</span></div>", unsafe_allow_html=True)
             
@@ -319,6 +316,27 @@ with tab2:
 # ------------------------------------------------------------------------------
 with tab3:
     st.write("🔥 10 हाई-मोमेंटम स्टॉक्स का डेली चार्ट स्कैन।")
+    def scan_swing_stocks(tickers):
+        results = []
+        for sym in tickers:
+            try:
+                df = yf.download(sym, period='6mo', interval='1d', progress=False)
+                if df.empty or len(df) < 30: continue
+                if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+                df['EMA_20'] = df['Close'].ewm(span=20, adjust=False).mean()
+                df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
+                delta = df['Close'].diff()
+                gain = (delta.where(delta > 0, 0)).rolling(window=14).mean(); loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                df['RSI'] = 100 - (100 / (1 + (gain / (loss + 1e-10))))
+                df['Vol_Avg'] = df['Volume'].rolling(20).mean()
+                last = df.iloc[-1]; c = round(float(last['Close']), 2)
+                is_uptrend = c > last['EMA_20'] > last['EMA_50']; is_momentum = last['RSI'] >= 58; is_vol_surge = last['Volume'] > (1.2 * last['Vol_Avg'])
+                
+                status = "🚀 STRONG BUY" if is_uptrend and is_momentum and is_vol_surge else "🔥 POTENTIAL" if is_uptrend and is_momentum else "⏳ WAIT"
+                results.append({"Stock": sym.replace('.NS', ''), "LTP (₹)": c, "RSI": round(last['RSI'],1), "Uptrend": "✅" if is_uptrend else "❌", "Action": status})
+            except: pass
+        return results
+
     swing_list = ["RELIANCE.NS", "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "TATAMOTORS.NS", "INFY.NS", "TCS.NS", "ITC.NS", "LT.NS", "M&M.NS"]
     with st.spinner("Scanning..."): swing_results = scan_swing_stocks(swing_list)
     if swing_results: st.dataframe(pd.DataFrame(swing_results), use_container_width=True, hide_index=True)

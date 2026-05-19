@@ -71,32 +71,29 @@ def get_nse_pcr():
 SH_TOKENS = {'^NSEI': '26000', '^NSEBANK': '26009', 'RELIANCE.NS': '2885', 'HDFCBANK.NS': '1333'}
 
 # ==============================================================================
-# 3. CORE CONFIGURATION & THEME (v18.2 Dynamic Theme Support)
+# 3. CORE CONFIGURATION & THEME 
 # ==============================================================================
-st.set_page_config(page_title="Scalper Pro AI v18.2", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Scalper Pro AI v18.3", layout="wide", initial_sidebar_state="collapsed")
 
-# 🚀 🚀 DYNAMIC THEME ENGINE 🚀 🚀
-# Session state to store theme preference
 if 'theme' not in st.session_state:
-    st.session_state.theme = 'dark' # Default theme
+    st.session_state.theme = 'dark' 
 
-# Dynamic colors based on theme state
 if st.session_state.theme == 'dark':
-    primary_color = "#deff9a" # Greenish yellow
-    secondary_color = "#00ffff" # Cyan
-    bg_color = "#0b0e11" # Black bg
-    text_color = "#e3e9f0" # Light text
-    card_bg = "#14181f" # Dark card bg
+    primary_color = "#deff9a" 
+    secondary_color = "#00ffff" 
+    bg_color = "#0b0e11" 
+    text_color = "#e3e9f0" 
+    card_bg = "#14181f" 
     border_color = "#2d3748"
     metric_label = "#8b949e"
     plot_paper = "#0b0e11"
     plot_bg = "#0b0e11"
-else: # LIGHT THEME
-    primary_color = "#2e7d32" # Dark Green
-    secondary_color = "#0277bd" # Light Blue
-    bg_color = "#f0f2f6" # Light Gray bg
-    text_color = "#31333F" # Dark text
-    card_bg = "#ffffff" # White card bg
+else: 
+    primary_color = "#2e7d32" 
+    secondary_color = "#0277bd" 
+    bg_color = "#f0f2f6" 
+    text_color = "#31333F" 
+    card_bg = "#ffffff" 
     border_color = "#d1d5db"
     metric_label = "#555555"
     plot_paper = "#f0f2f6"
@@ -110,7 +107,6 @@ st.markdown(f"""
     #MainMenu {{visibility: hidden;}} footer {{visibility: hidden;}} header {{visibility: hidden;}}
     [data-testid="collapsedControl"] {{ display: none; }}
     
-    /* Dynamic Metric Styles */
     div[data-testid="stMetricValue"] > div {{ color: {primary_color} !important; font-size: 28px !important; }}
     div[data-testid="stMetricLabel"] > label {{ color: {metric_label} !important; font-size: 13px !important; font-weight: 700 !important; letter-spacing: 0.5px; }}
     
@@ -121,10 +117,6 @@ st.markdown(f"""
     .ex-card {{ background: {card_bg}; border-radius: 12px; padding: 20px; border: 1px solid {border_color}; margin-bottom: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }}
     .inst-box {{ background: rgba(20, 24, 31, 0.05); padding: 12px; border-radius: 8px; border-left: 4px solid {secondary_color}; margin-bottom: 10px; border-top: 1px solid {border_color}; border-right: 1px solid {border_color}; border-bottom: 1px solid {border_color};}}
     .status-badge {{ padding: 4px 10px; border-radius: 6px; font-weight: 800; font-size: 12px; text-transform: uppercase; }}
-    
-    /* Bright Metric Text always Light for readability on both themes */
-    .bright-metric {{ color: #deff9a !important; font-weight: bold;}}
-    
     </style>
     """, unsafe_allow_html=True)
 audio_code = """<audio id="alert-sound" autoplay><source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-500.wav" type="audio/wav"></audio>"""
@@ -169,7 +161,7 @@ def style_results(val):
     return ''
 
 # ==============================================================================
-# 5. HYBRID QUANT ENGINE (Safe Series Handling from v18.1)
+# 5. HYBRID QUANT ENGINE 
 # ==============================================================================
 def calculate_quant_engine(df, symbol, banknifty_df=None, daily_df=None):
     if st.session_state.shoonya_token and symbol in SH_TOKENS:
@@ -178,7 +170,7 @@ def calculate_quant_engine(df, symbol, banknifty_df=None, daily_df=None):
 
     pdh, pdl = 0, 0
     if daily_df is not None and not daily_df.empty and len(daily_df) > 1:
-        pdh = float(daily_df['High'].squeeze().iloc[-2]) # Squeeze to safe float
+        pdh = float(daily_df['High'].squeeze().iloc[-2]) 
         pdl = float(daily_df['Low'].squeeze().iloc[-2])
         
     df['EMA_9'] = df['Close'].ewm(span=9, adjust=False).mean()
@@ -298,30 +290,27 @@ def calculate_quant_engine(df, symbol, banknifty_df=None, daily_df=None):
     return df, active_trade
 
 # ==============================================================================
-# 6. UI LAYOUT (INSTITUTIONAL DASHBOARD + THEME SWITCHER)
+# 6. UI LAYOUT 
 # ==============================================================================
-# 🚀 🚀 THEME SWITCHER IN THE HEADER 🚀 🚀
 header_col1, header_col2, header_theme = st.columns([10, 10, 3])
 
 with header_col1: 
     if st.session_state.shoonya_token: sh_status = f"<span style='color:{primary_color}; font-size:14px;'><i class='fa-solid fa-link'></i> Linked</span>"
     else: sh_status = f"<span style='color:#ff3333; font-size:14px;'>🔴 Disabled</span>"
-    st.markdown(f"<h1 style='margin:0; font-weight:800; color:{text_color};'>QUANT<span style='color:{primary_color};'>SCALPER AI</span> v18.2 {sh_status}</h1>", unsafe_allow_html=True)
+    st.markdown(f"<h1 style='margin:0; font-weight:800; color:{text_color};'>QUANT<span style='color:{primary_color};'>SCALPER AI</span> v18.3 {sh_status}</h1>", unsafe_allow_html=True)
 with header_col2:
     tz_ist = pytz.timezone('Asia/Kolkata'); now = datetime.datetime.now(tz_ist)
     market_status = "CLOSED" if now.hour >= 16 or now.hour < 9 or (now.hour==15 and now.minute>=30) else "LIVE"
     st.markdown(f"<div style='text-align:right; font-weight:700; color:#a0aec0; font-size:16px;'>📅 {now.strftime('%d %b')} | <span style='color:{'#ff3333' if market_status=='CLOSED' else primary_color}'>{now.strftime('%I:%M:%S %p')}</span></div>", unsafe_allow_html=True)
 
 with header_theme:
-    # Button to toggle theme
     btn_label = "🔆 Light" if st.session_state.theme == 'dark' else "🌙 Dark"
     if st.button(btn_label, key='theme_btn'):
         st.session_state.theme = 'light' if st.session_state.theme == 'dark' else 'dark'
-        st.rerun() # Refresh to apply theme
+        st.rerun() 
 
 st.markdown("<hr style='border-color:#2d3748; margin: 10px 0 15px 0;'>", unsafe_allow_html=True)
 
-# 🚀 INSTITUTIONAL METRICS ROW
 try:
     data = yf.download('^NSEI', period='1d', interval='1m', progress=False)
     bn_data = yf.download('^NSEBANK', period='1d', interval='1m', progress=False)
@@ -341,7 +330,6 @@ try:
         bn_trend = "BULLISH 🟢" if (float(bn_data['Close'].ewm(span=9).mean().iloc[-1]) > float(bn_data['Close'].ewm(span=21).mean().iloc[-1])) else "BEARISH 🔴"
         ai_msg = str(last['Msg'])
         
-        # Action Center with dynamic colors based on theme
         eod_color = "#ff3333" if st.session_state.theme == 'dark' else "#c62828"
         hold_color = "#ffaa00" if st.session_state.theme == 'dark' else "#ef6c00"
         execute_color = "#00ff66" if st.session_state.theme == 'dark' else "#1b5e20"
@@ -361,7 +349,6 @@ try:
         with m3: st.metric("Options PCR", f"{pcr_val}" if pcr_val else "Fetch Error")
         with m4: st.metric("Liquidity Zone (VWAP)", f"₹{round(vwap,1)}", f"VAH:{round(vah,1)} | VAL:{round(val,1)}")
 
-        # Dashboard body
         st.markdown("<br>", unsafe_allow_html=True)
         col_met1, col_met2 = st.columns([1, 2])
         
@@ -391,22 +378,17 @@ try:
                 </div>
                 """, unsafe_allow_html=True)
 
-        # Chart with Theme support
         fig = go.Figure()
-        # Liquidity Fill (Value Area)
         fig.add_trace(go.Scatter(x=df.index, y=df['VAH'], line=dict(width=0), showlegend=False))
         fig.add_trace(go.Scatter(x=df.index, y=df['VAL'], line=dict(width=0), fill='tonexty', fillcolor= f"rgba(0, 255, 255, {'0.05' if st.session_state.theme == 'dark' else '0.1'})", name='Value Area'))
         
-        # Spot Price color depends on theme for visibility
         spot_color = '#deff9a' if st.session_state.theme == 'dark' else '#004d40'
         fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='Spot Price', line=dict(color=spot_color, width=2.5)))
         fig.add_trace(go.Scatter(x=df.index, y=df['Baseline'], name='VWAP POC', line=dict(color=secondary_color, width=1.5, dash='dash')))
         
-        # PDH / PDL Lines (Yellow is visible on both)
         if pdh > 0: fig.add_hline(y=pdh, line_dash="dot", line_color="#ef6c00", annotation_text="PDH", annotation_font_color=text_color)
         if pdl > 0: fig.add_hline(y=pdl, line_dash="dot", line_color="#ef6c00", annotation_text="PDL", annotation_font_color=text_color)
         
-        # Dynamic theme updates for plot layout
         fig.update_layout(template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white', paper_bgcolor=plot_paper, plot_bgcolor=plot_bg, height=400, margin=dict(l=0,r=0,t=0,b=0), xaxis=dict(showgrid=False, tickfont_color=metric_label), yaxis=dict(gridcolor=border_color, tickfont_color=metric_label), legend_font_color=text_color)
         st.plotly_chart(fig, use_container_width=True)
         
@@ -414,29 +396,23 @@ try:
         n_hist = load_history()
         if not n_hist.empty: st.dataframe(n_hist[['Time (IST)','Action','Spot Entry','Spot Exit','Points','Result']].style.apply(lambda x: [style_results(val) if x.name == 'Result' else '' for val in x], axis=0), use_container_width=True, hide_index=True)
 
-        # 🚀 🚀 SCALPER CHAT PROMPT SECTION 🚀 🚀
+        # 🚀 🚀 SCALPER CHAT PROMPT SECTION (BUG FIXED) 🚀 🚀
         st.markdown("<br><hr style='border-color:#2d3748;'>", unsafe_allow_html=True)
         st.markdown(f"<h3 style='color:{primary_color};'><i class='fa-solid fa-robot'></i> AI Scalper Analyst</h3>", unsafe_allow_html=True)
         
         if st.button("Generate Current Market Analysis Prompt"):
-            # assembly of the advanced context prompt
             current_vwap_pos = "Above" if curr_p > vwap else "Below"
             current_va_pos = "Inside" if val < curr_p < vah else "Outside (Above VAH)" if curr_p > vah else "Outside (Below VAL)"
-            
             pcr_status = "Very Bullish" if pcr_val and pcr_val > 1.2 else "Bullish" if pcr_val and pcr_val > 1.0 else "Bearish" if pcr_val and pcr_val < 1.0 else "Very Bearish" if pcr_val and pcr_val < 0.8 else "Unknown"
+            atm_strike = int(round(curr_p / 50) * 50) # 🚀 FIXED HERE
             
-            liquidity_context = f"Price is {current_va_pos} the Institutional Value Area (VAH: {round(vah,1)}, VAL: {round(val,1)})."
-            if pdh > 0 and pdl > 0:
-                liquidity_context += f" Previous Day High: {pdh}, Previous Day Low: {pdl}."
-
-            # THE FINAL MASTER CHAT PROMPT
             scalper_chat_prompt = f"""
 Act as an Institutional Option Scalper and Quant Analyst. Analyze the current market context based Strictly on this data for Nifty 50:
 
 **Market Snapshot:**
 - Nifty Spot: ₹{curr_p} ({pts} pts today)
 - Volatility (ATR 1m): {round(atr,1)} pts (Dynamic Risk)
-- ADX Trend Strength: {round(adx,1)} ({'Strong Trend' if adx>=25 else 'Chop Zone'})
+- ADX Trend Strength: {round(adx,1)} ({'Strong Trend' if adx>=22 else 'Chop Zone'})
 
 **Institutional Context:**
 - Option Chain PCR: {pcr_val} ({pcr_status})
@@ -450,7 +426,7 @@ Act as an Institutional Option Scalper and Quant Analyst. Analyze the current ma
 
 Given this context, tell me:
 1. Is it safe to execute a scalp right now? Why or why not based on 'Smart Money' alignment?
-2. If I had to take a trade within the next 5 minutes, would the probability favor buying { एटीएम_स्ट्राइक = एटीएम_स्ट्राइक if '에टीएम_스트라이크' in locals() else ATM_Strike } CALL (CE) or PUT (PE)? State the primary institutional reason (e.g., 'BankNifty Divergence is too risky' or 'Liquidity Sweep confirmed by PCR').
+2. If I had to take a trade within the next 5 minutes, would the probability favor buying {atm_strike} CALL (CE) or PUT (PE)? State the primary institutional reason.
 3. Based on the current ATR of {round(atr,1)}, what should be my maximum Spot Stop-Loss in points for this scalp to avoid being stopped out by noise?
 
 Be extremely concise and professional.

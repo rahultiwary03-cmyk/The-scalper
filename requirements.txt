@@ -1,2 +1,8 @@
+streamlit
 yfinance
 pyotp
+plotly
+pandas
+numpy
+requests
+pytz

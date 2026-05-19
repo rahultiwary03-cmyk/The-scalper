@@ -12,10 +12,10 @@ import pytz
 # 1. 🔑 SHOONYA API CREDENTIALS (यहाँ अपनी डिटेल्स डालें)
 # ==============================================================================
 SHOONYA_UID = "FN209492" # अपना User ID
-SHOONYA_PWD = "YOUR_PASSWORD" # अपना लॉगिन पासवर्ड
-SHOONYA_API_KEY = "YOUR_API_KEY" # Prism से मिली API Key
-SHOONYA_VC = "YOUR_VENDOR_CODE" # Prism से मिला Vendor Code
-SHOONYA_TOTP_SECRET = "YOUR_TOTP_SECRET" # QR कोड के नीचे वाला Secret Code
+SHOONYA_PWD = "Rahul@1995" # अपना लॉगिन पासवर्ड
+SHOONYA_API_KEY = "3007acd3cd50a75e4e8eb1bfc0e1459a" # Prism से मिली API Key
+SHOONYA_VC = "FN209492_U" # Prism से मिला Vendor Code
+SHOONYA_TOTP_SECRET = "666J4TSFQRM624X75B6WZ32PMUH3477P" # QR कोड के नीचे वाला Secret Code
 
 # ==============================================================================
 # 2. SHOONYA LIVE DATA ENGINE (Zero Latency)

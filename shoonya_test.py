@@ -14,10 +14,10 @@ import json
 # 1. 🔑 SHOONYA API CREDENTIALS 
 # ==============================================================================
 SHOONYA_UID = "FN209492" 
-SHOONYA_PWD = "Rahul@1995" 
-SHOONYA_API_KEY = "3007acd3cd50a75e4e8eb1bfc0e1459a" 
+SHOONYA_PWD = "YOUR_PASSWORD" 
+SHOONYA_API_KEY = "YOUR_API_KEY" 
 SHOONYA_VC = "FN209492_U" 
-SHOONYA_TOTP_SECRET = "666J4TSFQRM624X75B6WZ32PMUH3477P" 
+SHOONYA_TOTP_SECRET = "YOUR_TOTP_SECRET" 
 
 # ==============================================================================
 # 2. SHOONYA LIVE DATA ENGINE
@@ -67,14 +67,14 @@ def get_nse_pcr():
         tot_pe = data['filtered']['PE']['totOI']
         return round(tot_pe / tot_ce, 2) if tot_ce > 0 else 1.0
     except:
-        return None # Return None gracefully if NSE blocks Cloud IP
+        return None 
 
 SH_TOKENS = {'^NSEI': '26000', '^NSEBANK': '26009', 'RELIANCE.NS': '2885', 'HDFCBANK.NS': '1333'}
 
 # ==============================================================================
 # 3. CORE CONFIGURATION & THEME
 # ==============================================================================
-st.set_page_config(page_title="Scalper Pro AI v18.0", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Scalper Pro AI v18.1", layout="wide", initial_sidebar_state="collapsed")
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
@@ -83,7 +83,6 @@ st.markdown("""
     #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
     [data-testid="collapsedControl"] { display: none; }
     
-    /* Institutional Dashboard Metrics */
     div[data-testid="stMetricValue"] > div { color: #deff9a !important; font-size: 28px !important; }
     div[data-testid="stMetricLabel"] > label { color: #8b949e !important; font-size: 13px !important; font-weight: 700 !important; letter-spacing: 0.5px; }
     
@@ -138,49 +137,42 @@ def style_results(val):
     return ''
 
 # ==============================================================================
-# 5. THE HEDGE FUND QUANT ENGINE (v18.0)
+# 5. THE HEDGE FUND QUANT ENGINE
 # ==============================================================================
 def calculate_quant_engine(df, symbol, banknifty_df=None, daily_df=None):
-    if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-
     if st.session_state.shoonya_token and symbol in SH_TOKENS:
         live_ltp = get_shoonya_ltp(SH_TOKENS[symbol], st.session_state.shoonya_token)
         if live_ltp: df.at[df.index[-1], 'Close'] = live_ltp 
 
-    # 🚀 INSTITUTIONAL FEATURE 4: TRAPPED TRADER LOGIC (PDH / PDL Sweeps)
+    # 🚀 YFINANCE MULTI-INDEX SAFE FLATTENER FOR PDH/PDL
     pdh, pdl = 0, 0
     if daily_df is not None and not daily_df.empty and len(daily_df) > 1:
-        pdh = float(daily_df['High'].iloc[-2])
-        pdl = float(daily_df['Low'].iloc[-2])
+        pdh = float(daily_df['High'].squeeze().iloc[-2])
+        pdl = float(daily_df['Low'].squeeze().iloc[-2])
         
     df['EMA_9'] = df['Close'].ewm(span=9, adjust=False).mean()
     df['EMA_21'] = df['Close'].ewm(span=21, adjust=False).mean()
     df['EMA_200'] = df['Close'].ewm(span=200, adjust=False).mean() 
     df['EMA_105'] = df['Close'].ewm(span=105, adjust=False).mean()
     
-    # 🚀 INSTITUTIONAL FEATURE 2: VWAP BANDS (Value Area High/Low Proxy)
     if 'Volume' in df.columns and df['Volume'].sum() > 0:
         tp = (df['High'] + df['Low'] + df['Close']) / 3
         df['Baseline'] = (tp * df['Volume']).cumsum() / (df['Volume'].cumsum() + 1e-10) 
-        # Standard Deviation of VWAP
         df['VWAP_Variance'] = (((df['Close'] - df['Baseline'])**2) * df['Volume']).cumsum() / (df['Volume'].cumsum() + 1e-10)
         df['VWAP_Std'] = np.sqrt(df['VWAP_Variance'])
-        df['VAH'] = df['Baseline'] + df['VWAP_Std'] # Value Area High
-        df['VAL'] = df['Baseline'] - df['VWAP_Std'] # Value Area Low
+        df['VAH'] = df['Baseline'] + df['VWAP_Std'] 
+        df['VAL'] = df['Baseline'] - df['VWAP_Std'] 
     else:
         df['Baseline'] = df['Close'].ewm(span=50, adjust=False).mean() 
         df['VAH'] = df['Baseline'] * 1.001
         df['VAL'] = df['Baseline'] * 0.999
     
-    # 🚀 INSTITUTIONAL FEATURE 3: BANKNIFTY CORRELATION
-    bn_bullish = True
-    bn_bearish = True
+    bn_bullish, bn_bearish = True, True
     if banknifty_df is not None and not banknifty_df.empty:
-        if isinstance(banknifty_df.columns, pd.MultiIndex): banknifty_df.columns = banknifty_df.columns.get_level_values(0)
         bn_ema9 = banknifty_df['Close'].ewm(span=9, adjust=False).mean().iloc[-1]
         bn_ema21 = banknifty_df['Close'].ewm(span=21, adjust=False).mean().iloc[-1]
-        bn_bullish = bn_ema9 > bn_ema21
-        bn_bearish = bn_ema9 < bn_ema21
+        bn_bullish = float(bn_ema9) > float(bn_ema21)
+        bn_bearish = float(bn_ema9) < float(bn_ema21)
 
     high, low, close = df['High'].squeeze(), df['Low'].squeeze(), df['Close'].squeeze()
     plus_dm = high.diff(); minus_dm = low.diff()
@@ -210,9 +202,6 @@ def calculate_quant_engine(df, symbol, banknifty_df=None, daily_df=None):
         adx = float(df['ADX_14'].iloc[i])
         rsi = float(df['RSI_14'].iloc[i])
         baseline_val = float(df['Baseline'].iloc[i])
-        vah_val = float(df['VAH'].iloc[i])
-        val_val = float(df['VAL'].iloc[i])
-        ema105_val = float(df['EMA_105'].iloc[i])
         atr = float(df['ATR_14'].iloc[i])
         
         candle_time = df.index[i]
@@ -223,35 +212,26 @@ def calculate_quant_engine(df, symbol, banknifty_df=None, daily_df=None):
         is_trade_allowed_time = (ist_time.hour == 9 and ist_time.minute >= 20) or (ist_time.hour > 9 and ist_time.hour < 15)
         is_eod = (ist_time.hour == 15 and ist_time.minute >= 15) or (ist_time.hour >= 16)
         
-        # TRAPPED TRADER LOGIC (Check if PDL/PDH swept)
         is_bullish_sweep = pdl > 0 and curr_l < pdl and curr_c > pdl
         is_bearish_sweep = pdh > 0 and curr_h > pdh and curr_c < pdh
             
         score, trend_dir, msg = 0, 0, ""
         if is_trade_allowed_time and not is_eod and adx >= 22: 
-            # LONG Condition: MTF + BankNifty Correlated + Above VWAP
             if df['EMA_9'].iloc[i] > df['EMA_21'].iloc[i] and curr_c > baseline_val and df['+DI'].iloc[i] > df['-DI'].iloc[i]:
                 if bn_bullish:
                     score = 100 if rsi >= 55 else 70
                     trend_dir = 1
                     msg = "🚀 Perfect Long (BN Correlated)"
-                else:
-                    msg = "⚠️ Long Blocked: BankNifty Divergence"
-            
-            # SHORT Condition: MTF + BankNifty Correlated + Below VWAP
+                else: msg = "⚠️ Long Blocked: BankNifty Divergence"
             elif df['EMA_9'].iloc[i] < df['EMA_21'].iloc[i] and curr_c < baseline_val and df['-DI'].iloc[i] > df['+DI'].iloc[i]:
                 if bn_bearish:
                     score = 100 if rsi <= 45 else 70
                     trend_dir = -1
                     msg = "📉 Perfect Short (BN Correlated)"
-                else:
-                    msg = "⚠️ Short Blocked: BankNifty Divergence"
+                else: msg = "⚠️ Short Blocked: BankNifty Divergence"
             
-            # Liquidity Sweep Overrides (Pro Alpha)
-            if is_bullish_sweep and rsi < 50:
-                score, trend_dir, msg = 100, 1, "🔥 LIQUIDITY SWEEP: Retailers Trapped (Long)"
-            if is_bearish_sweep and rsi > 50:
-                score, trend_dir, msg = 100, -1, "🔥 LIQUIDITY SWEEP: Retailers Trapped (Short)"
+            if is_bullish_sweep and rsi < 50: score, trend_dir, msg = 100, 1, "🔥 LIQUIDITY SWEEP: Retailers Trapped (Long)"
+            if is_bearish_sweep and rsi > 50: score, trend_dir, msg = 100, -1, "🔥 LIQUIDITY SWEEP: Retailers Trapped (Short)"
                 
         df.at[df.index[i], 'AI_Score'] = score
         df.at[df.index[i], 'Msg'] = msg
@@ -297,13 +277,13 @@ def calculate_quant_engine(df, symbol, banknifty_df=None, daily_df=None):
     return df, active_trade
 
 # ==============================================================================
-# 6. UI LAYOUT (INSTITUTIONAL DASHBOARD)
+# 6. UI LAYOUT
 # ==============================================================================
 col_h1, col_h2 = st.columns([2, 1])
 with col_h1: 
     if st.session_state.shoonya_token: sh_status = "<span style='color:#00ff66; font-size:14px;'><i class='fa-solid fa-link'></i> Shoonya API Linked</span>"
     else: sh_status = f"<span style='color:#ff3333; font-size:14px;'>🔴 Shoonya API: {st.session_state.get('shoonya_msg', 'Disabled')}</span>"
-    st.markdown(f"<h1 style='margin:0; font-weight:800; color:#e3e9f0;'>QUANT<span style='color:#deff9a;'>SCALPER AI</span> v18.0 <br>{sh_status}</h1>", unsafe_allow_html=True)
+    st.markdown(f"<h1 style='margin:0; font-weight:800; color:#e3e9f0;'>QUANT<span style='color:#deff9a;'>SCALPER AI</span> v18.1 <br>{sh_status}</h1>", unsafe_allow_html=True)
 with col_h2:
     tz_ist = pytz.timezone('Asia/Kolkata'); now = datetime.datetime.now(tz_ist)
     market_status = "CLOSED" if now.hour >= 16 or now.hour < 9 or (now.hour==15 and now.minute>=30) else "LIVE"
@@ -317,21 +297,24 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(["⚡ NIFTY HEDGE FUND", "📡 STOCK INT.
 # ------------------------------------------------------------------------------
 with tab1:
     try:
-        # Fetch Multiple Datasets
         data = yf.download('^NSEI', period='1d', interval='1m', progress=False)
         bn_data = yf.download('^NSEBANK', period='1d', interval='1m', progress=False)
         daily_data = yf.download('^NSEI', period='5d', interval='1d', progress=False)
-        pcr_val = get_nse_pcr() # Live PCR Fetch
+        pcr_val = get_nse_pcr() 
+        
+        # 🚀 YFINANCE MULTI-INDEX BUG FIX
+        for d in [data, bn_data, daily_data]:
+            if not d.empty and isinstance(d.columns, pd.MultiIndex):
+                d.columns = d.columns.get_level_values(0)
         
         if not data.empty:
             df, active_trade = calculate_quant_engine(data, '^NSEI', bn_data, daily_data)
             last = df.iloc[-1]; prev = df.iloc[-2]; curr_p = round(float(df['Close'].iloc[-1]), 2); pts = round(curr_p - round(float(df['Open'].iloc[0]), 2), 2)
             adx, atr, vwap, vah, val = float(last['ADX_14']), float(last['ATR_14']), float(last['Baseline']), float(last['VAH']), float(last['VAL'])
-            pdh = float(daily_data['High'].iloc[-2]) if not daily_data.empty else 0
-            pdl = float(daily_data['Low'].iloc[-2]) if not daily_data.empty else 0
+            pdh = float(daily_data['High'].squeeze().iloc[-2]) if not daily_data.empty else 0
+            pdl = float(daily_data['Low'].squeeze().iloc[-2]) if not daily_data.empty else 0
             
-            # BankNifty Trend
-            bn_trend = "BULLISH 🟢" if (bn_data['Close'].ewm(span=9).mean().iloc[-1] > bn_data['Close'].ewm(span=21).mean().iloc[-1]) else "BEARISH 🔴"
+            bn_trend = "BULLISH 🟢" if (float(bn_data['Close'].ewm(span=9).mean().iloc[-1]) > float(bn_data['Close'].ewm(span=21).mean().iloc[-1])) else "BEARISH 🔴"
             
             is_eod_ui = now.hour >= 15 and now.minute >= 15
             ai_msg = str(last['Msg'])
@@ -346,7 +329,6 @@ with tab1:
             
             st.markdown(f"<div style='background:#14181f; padding:15px; border-radius:10px; border-left:5px solid {color_cmd}; color:{color_cmd}; font-weight:700; margin-bottom:15px; font-size:16px;'>{txt_cmd}</div>", unsafe_allow_html=True)
 
-            # 🚀 INSTITUTIONAL METRICS ROW
             col_m1, col_m2, col_m3, col_m4 = st.columns(4)
             with col_m1: st.metric("NIFTY SPOT", f"₹{curr_p:,}", f"{pts} pts")
             with col_m2: st.metric("BankNifty Alignment", bn_trend)
@@ -382,19 +364,13 @@ with tab1:
                     </div>
                     """, unsafe_allow_html=True)
 
-            # Chart with VAH/VAL Bands
             fig = go.Figure()
-            # Liquidity Fill (Value Area)
             fig.add_trace(go.Scatter(x=df.index, y=df['VAH'], line=dict(width=0), showlegend=False))
-            fig.add_trace(go.Scatter(x=df.index, y=df['VAL'], line=dict(width=0), fill='tonexty', fillcolor='rgba(0, 255, 255, 0.05)', name='Value Area (VWAP Dev)'))
-            
+            fig.add_trace(go.Scatter(x=df.index, y=df['VAL'], line=dict(width=0), fill='tonexty', fillcolor='rgba(0, 255, 255, 0.05)', name='Value Area'))
             fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='Spot Price', line=dict(color='#deff9a', width=2)))
             fig.add_trace(go.Scatter(x=df.index, y=df['Baseline'], name='VWAP POC', line=dict(color='#00ffff', width=1.5, dash='dash')))
-            
-            # PDH / PDL Lines
             if pdh > 0: fig.add_hline(y=pdh, line_dash="dot", line_color="#ffaa00", annotation_text="PDH")
             if pdl > 0: fig.add_hline(y=pdl, line_dash="dot", line_color="#ffaa00", annotation_text="PDL")
-            
             fig.update_layout(template='plotly_dark', paper_bgcolor='#0b0e11', plot_bgcolor='#0b0e11', height=400, margin=dict(l=0,r=0,t=0,b=0), xaxis=dict(showgrid=False), yaxis=dict(gridcolor='#2d3748'))
             st.plotly_chart(fig, use_container_width=True)
             
@@ -404,7 +380,7 @@ with tab1:
     except Exception as e: st.error(f"Error Nifty: {e}")
 
 # ------------------------------------------------------------------------------
-# TAB 2 & 3 (Same functionality, minimal code for space)
+# TAB 2 & 3
 # ------------------------------------------------------------------------------
 with tab2: st.write("Intraday Stocks: Tracking disabled in v18 focus mode to save bandwidth for Nifty Option Chain.")
 with tab3: st.write("Swing Radar: Move to dedicated file for daily scans.")

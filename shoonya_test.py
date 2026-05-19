@@ -12,13 +12,13 @@ import pytz
 # 1. 🔑 SHOONYA API CREDENTIALS 
 # ==============================================================================
 SHOONYA_UID = "FN209492" # अपना User ID
-SHOONYA_PWD = "Rahul@1995" # अपना पासवर्ड
+SHOONYA_PWD = "Rahul@1995" # अपना पासवर्ड (बिना स्पेस के)
 SHOONYA_API_KEY = "3007acd3cd50a75e4e8eb1bfc0e1459a" # Prism वाली API Key
-SHOONYA_VC = "FN209492_U" # Vendor Code
-SHOONYA_TOTP_SECRET = "666J4TSFQRM624X75B6WZ32PMUH3477P" # QR कोड के नीचे वाला लंबा Secret Code
+SHOONYA_VC = "FN209492_U" # Vendor Code (ध्यान दें: _U लगा होना चाहिए)
+SHOONYA_TOTP_SECRET = "666J4TSFQRM624X75B6WZ32PMUH3477P" # QR कोड के नीचे वाला Secret
 
 # ==============================================================================
-# 2. SHOONYA LIVE DATA ENGINE 
+# 2. SHOONYA LIVE DATA ENGINE (SAFE JSON PARSER)
 # ==============================================================================
 try:
     import pyotp
@@ -38,23 +38,40 @@ def shoonya_login():
         app_key_sha256 = hashlib.sha256(f"{SHOONYA_UID}|{SHOONYA_API_KEY}".encode('utf-8')).hexdigest()
         totp = pyotp.TOTP(SHOONYA_TOTP_SECRET).now()
         
-        payload = {"apkversion": "1.0.0", "uid": SHOONYA_UID, "pwd": pwd_sha256, "factor2": totp, "vc": SHOONYA_VC, "appkey": app_key_sha256, "imei": "abc12345", "source": "API"}
-        res = requests.post('https://api.shoonya.com/NorenWClientTP/QuickAuth', data='jData=' + json.dumps(payload)).json()
+        payload = {
+            "apkversion": "1.0.0", 
+            "uid": SHOONYA_UID, 
+            "pwd": pwd_sha256, 
+            "factor2": totp, 
+            "vc": SHOONYA_VC, 
+            "appkey": app_key_sha256, 
+            "imei": "abc12345", 
+            "source": "API"
+        }
+        res = requests.post('https://api.shoonya.com/NorenWClientTP/QuickAuth', data='jData=' + json.dumps(payload))
         
-        if res.get('stat') == 'Ok': 
-            return res.get('susertoken'), "Success"
+        # 🚀 BUG FIX: Safe JSON Parsing
+        try:
+            data = res.json()
+        except ValueError:
+            return None, f"Shoonya Server Error: HTTP {res.status_code} (Not returning JSON)"
+
+        if data.get('stat') == 'Ok': 
+            return data.get('susertoken'), "Success"
         else:
-            return None, res.get('emsg', 'Unknown Shoonya Error')
+            return None, data.get('emsg', 'Unknown Shoonya Error')
+            
     except Exception as e: 
-        return None, f"Code Error: {str(e)}"
+        return None, f"Login Error: {str(e)}"
 
 def get_shoonya_ltp(token, susertoken):
     if not susertoken: return None
     try:
         payload = {"uid": SHOONYA_UID, "exch": "NSE", "token": str(token)}
         headers = {'Authorization': f'Bearer {SHOONYA_UID} {susertoken}'}
-        res = requests.post('https://api.shoonya.com/NorenWClientTP/GetQuotes', data='jData=' + json.dumps(payload), headers=headers).json()
-        if res.get('stat') == 'Ok': return float(res.get('lp'))
+        res = requests.post('https://api.shoonya.com/NorenWClientTP/GetQuotes', data='jData=' + json.dumps(payload), headers=headers)
+        data = res.json()
+        if data.get('stat') == 'Ok': return float(data.get('lp'))
         return None
     except: return None
 
@@ -63,7 +80,7 @@ SH_TOKENS = {'^NSEI': '26000', 'RELIANCE.NS': '2885', 'HDFCBANK.NS': '1333', 'IC
 # ==============================================================================
 # 3. CORE CONFIGURATION & THEME
 # ==============================================================================
-st.set_page_config(page_title="Scalper Pro AI v16.2", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Scalper Pro AI v16.3", layout="wide", initial_sidebar_state="collapsed")
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
@@ -81,7 +98,6 @@ st.markdown("""
     """, unsafe_allow_html=True)
 audio_code = """<audio id="alert-sound" autoplay><source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-500.wav" type="audio/wav"></audio>"""
 
-# 🚀 BUG FIX: Bulletproof Session Management
 if 'shoonya_token' not in st.session_state or 'shoonya_msg' not in st.session_state:
     token, msg = shoonya_login()
     st.session_state.shoonya_token = token
@@ -120,6 +136,12 @@ def load_history(is_nifty=False):
 def style_results(val):
     if 'TARGET' in str(val) or 'PROFIT' in str(val): return 'background-color: rgba(0, 255, 102, 0.1); color: #00ff66; font-weight: bold;'
     if 'SL HIT' in str(val) or 'LOSS' in str(val) or 'SQUARE-OFF' in str(val): return 'background-color: rgba(255, 51, 51, 0.1); color: #ff3333; font-weight: bold;'
+    return ''
+
+def style_swing_action(val):
+    val_str = str(val).upper()
+    if 'STRONG BUY' in val_str: return 'background-color: rgba(0, 255, 102, 0.1); color: #00ff66; font-weight: bold;'
+    elif 'POTENTIAL' in val_str: return 'background-color: rgba(255, 170, 0, 0.1); color: #ffaa00; font-weight: bold;'
     return ''
 
 # ==============================================================================
@@ -223,11 +245,10 @@ with col_h1:
     if st.session_state.shoonya_token:
         sh_status = "<span style='color:#00ff66; font-size:14px;'>🟢 Shoonya Live API Linked</span>"
     else:
-        # 🚀 BUG FIX: Safe retrieval of error message
-        err_msg = st.session_state.get('shoonya_msg', 'Check Credentials/PyOTP')
+        err_msg = st.session_state.get('shoonya_msg', 'Check Credentials')
         sh_status = f"<span style='color:#ff3333; font-size:14px;'>🔴 Shoonya Failed: {err_msg}</span>"
         
-    st.markdown(f"<h1 style='margin:0; font-weight:800; color:#e3e9f0;'>QUANT<span style='color:#deff9a;'>SCALPER AI</span> v16.2 <br>{sh_status}</h1>", unsafe_allow_html=True)
+    st.markdown(f"<h1 style='margin:0; font-weight:800; color:#e3e9f0;'>QUANT<span style='color:#deff9a;'>SCALPER AI</span> v16.3 <br>{sh_status}</h1>", unsafe_allow_html=True)
 with col_h2:
     tz_ist = pytz.timezone('Asia/Kolkata'); now = datetime.datetime.now(tz_ist)
     market_status = "CLOSED" if now.hour >= 16 or now.hour < 9 or (now.hour==15 and now.minute>=30) else "LIVE"
@@ -258,7 +279,7 @@ with tab1:
 
             col_met1, col_met2 = st.columns([1, 2])
             with col_met1:
-                source_txt = "Shoonya Live" if st.session_state.shoonya_token else "YFinance"
+                source_txt = "Shoonya Live API" if st.session_state.shoonya_token else "YFinance"
                 st.metric(f"NIFTY SPOT ({source_txt})", f"₹{curr_p:,}", f"{pts} pts")
                 st.markdown(f"<div style='background:#14181f; padding:10px; border-radius:8px; border:1px solid #2d3748;'>TREND (ADX): <span style='color:{'#00ff66' if adx>=25 else '#ff3333'}; font-weight:700;'>{round(adx,1)} ({'Trending' if adx>=25 else 'Chop Zone'})</span></div>", unsafe_allow_html=True)
             
@@ -312,7 +333,7 @@ with tab2:
         except: pass
 
 # ------------------------------------------------------------------------------
-# TAB 3, 4, 5... 
+# TAB 3, 4, 5
 # ------------------------------------------------------------------------------
 with tab3:
     st.write("🔥 10 हाई-मोमेंटम स्टॉक्स का डेली चार्ट स्कैन।")
@@ -339,7 +360,7 @@ with tab3:
 
     swing_list = ["RELIANCE.NS", "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "TATAMOTORS.NS", "INFY.NS", "TCS.NS", "ITC.NS", "LT.NS", "M&M.NS"]
     with st.spinner("Scanning..."): swing_results = scan_swing_stocks(swing_list)
-    if swing_results: st.dataframe(pd.DataFrame(swing_results), use_container_width=True, hide_index=True)
+    if swing_results: st.dataframe(pd.DataFrame(swing_results).style.apply(lambda x: [style_swing_action(val) if x.name == 'Action' else '' for val in x], axis=0), use_container_width=True, hide_index=True)
 
 with tab4:
     st.markdown("<h2 style='color:#deff9a; font-weight:800;'>📊 YOUR TRADING PERFORMANCE AUDIT</h2><hr style='border-color:#2d3748;'>", unsafe_allow_html=True)

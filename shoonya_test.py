@@ -50,19 +50,13 @@ def shoonya_login():
         }
         res = requests.post('https://api.shoonya.com/NorenWClientTP/QuickAuth', data='jData=' + json.dumps(payload))
         
-        # 🚀 BUG FIX: Safe JSON Parsing
-        try:
-            data = res.json()
-        except ValueError:
-            return None, f"Shoonya Server Error: HTTP {res.status_code} (Not returning JSON)"
+        try: data = res.json()
+        except ValueError: return None, f"Shoonya Server Error: HTTP {res.status_code}"
 
-        if data.get('stat') == 'Ok': 
-            return data.get('susertoken'), "Success"
-        else:
-            return None, data.get('emsg', 'Unknown Shoonya Error')
+        if data.get('stat') == 'Ok': return data.get('susertoken'), "Success"
+        else: return None, data.get('emsg', 'Unknown Shoonya Error')
             
-    except Exception as e: 
-        return None, f"Login Error: {str(e)}"
+    except Exception as e: return None, f"Login Error: {str(e)}"
 
 def get_shoonya_ltp(token, susertoken):
     if not susertoken: return None
@@ -80,7 +74,7 @@ SH_TOKENS = {'^NSEI': '26000', 'RELIANCE.NS': '2885', 'HDFCBANK.NS': '1333', 'IC
 # ==============================================================================
 # 3. CORE CONFIGURATION & THEME
 # ==============================================================================
-st.set_page_config(page_title="Scalper Pro AI v16.3", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Scalper Pro AI v16.4", layout="wide", initial_sidebar_state="collapsed")
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
@@ -145,7 +139,7 @@ def style_swing_action(val):
     return ''
 
 # ==============================================================================
-# 5. HYBRID QUANT ENGINE
+# 5. HYBRID QUANT ENGINE (v16.4: THE ULTIMATE TREND FILTER)
 # ==============================================================================
 def calculate_quant_engine(df, symbol):
     if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
@@ -156,6 +150,16 @@ def calculate_quant_engine(df, symbol):
 
     df['EMA_9'] = df['Close'].ewm(span=9, adjust=False).mean()
     df['EMA_21'] = df['Close'].ewm(span=21, adjust=False).mean()
+    df['EMA_200'] = df['Close'].ewm(span=200, adjust=False).mean() # 🚀 RESTORED 200 EMA
+    
+    # 🚀 RESTORED VWAP/BASELINE
+    if 'Volume' in df.columns and df['Volume'].sum() > 0:
+        tp = (df['High'] + df['Low'] + df['Close']) / 3
+        df['Baseline'] = (tp * df['Volume']).cumsum() / (df['Volume'].cumsum() + 1e-10) 
+        df['Vol_Avg'] = df['Volume'].rolling(20).mean() 
+    else:
+        df['Baseline'] = df['Close'].ewm(span=50, adjust=False).mean() 
+        df['Vol_Avg'] = 1
     
     high, low, close = df['High'].squeeze(), df['Low'].squeeze(), df['Close'].squeeze()
     plus_dm = high.diff(); minus_dm = low.diff()
@@ -175,11 +179,13 @@ def calculate_quant_engine(df, symbol):
     active_trade = None
     is_nifty = "NSEI" in symbol
     
-    start_idx = 30 if len(df) > 30 else 1 
+    start_idx = 200 if len(df) > 200 else 30 # Need 200 candles for EMA 200
     for i in range(start_idx, len(df)):
         curr_c = round(float(df['Close'].iloc[i]), 2)
         adx = float(df['ADX_14'].iloc[i])
         rsi = float(df['RSI_14'].iloc[i])
+        baseline_val = float(df['Baseline'].iloc[i])
+        ema200_val = float(df['EMA_200'].iloc[i])
         
         candle_time = df.index[i]
         if candle_time.tz is None: candle_time = candle_time.tz_localize('UTC')
@@ -190,12 +196,13 @@ def calculate_quant_engine(df, symbol):
         is_eod = (ist_time.hour == 15 and ist_time.minute >= 15) or (ist_time.hour >= 16)
             
         score, trend_dir = 0, 0
-        if is_trade_allowed_time and not is_eod and adx >= 25:
-            if df['EMA_9'].iloc[i] > df['EMA_21'].iloc[i] and df['+DI'].iloc[i] > df['-DI'].iloc[i]:
-                score = 100 if rsi >= 60 else 70
+        if is_trade_allowed_time and not is_eod and adx >= 22: # ADX slightly relaxed to catch early breakout
+            # 🚀 TRIPLE THREAT FILTER: 9/21 Crossover + Price > VWAP + Price > 200 EMA
+            if df['EMA_9'].iloc[i] > df['EMA_21'].iloc[i] and curr_c > baseline_val and curr_c > ema200_val and df['+DI'].iloc[i] > df['-DI'].iloc[i]:
+                score = 100 if rsi >= 55 else 70
                 trend_dir = 1
-            elif df['EMA_9'].iloc[i] < df['EMA_21'].iloc[i] and df['-DI'].iloc[i] > df['+DI'].iloc[i]:
-                score = 100 if rsi <= 40 else 70
+            elif df['EMA_9'].iloc[i] < df['EMA_21'].iloc[i] and curr_c < baseline_val and curr_c < ema200_val and df['-DI'].iloc[i] > df['+DI'].iloc[i]:
+                score = 100 if rsi <= 45 else 70
                 trend_dir = -1
         
         df.at[df.index[i], 'AI_Score'] = score
@@ -246,9 +253,9 @@ with col_h1:
         sh_status = "<span style='color:#00ff66; font-size:14px;'>🟢 Shoonya Live API Linked</span>"
     else:
         err_msg = st.session_state.get('shoonya_msg', 'Check Credentials')
-        sh_status = f"<span style='color:#ff3333; font-size:14px;'>🔴 Shoonya Failed: {err_msg}</span>"
+        sh_status = f"<span style='color:#ff3333; font-size:14px;'>🔴 Shoonya API: {err_msg}</span>"
         
-    st.markdown(f"<h1 style='margin:0; font-weight:800; color:#e3e9f0;'>QUANT<span style='color:#deff9a;'>SCALPER AI</span> v16.3 <br>{sh_status}</h1>", unsafe_allow_html=True)
+    st.markdown(f"<h1 style='margin:0; font-weight:800; color:#e3e9f0;'>QUANT<span style='color:#deff9a;'>SCALPER AI</span> v16.4 <br>{sh_status}</h1>", unsafe_allow_html=True)
 with col_h2:
     tz_ist = pytz.timezone('Asia/Kolkata'); now = datetime.datetime.now(tz_ist)
     market_status = "CLOSED" if now.hour >= 16 or now.hour < 9 or (now.hour==15 and now.minute>=30) else "LIVE"
@@ -271,9 +278,9 @@ with tab1:
             
             if is_eod_ui: color_cmd, txt_cmd = "#ff3333", "EOD Square-Off: इंट्राडे का समय समाप्त।"
             elif active_trade is not None: color_cmd, txt_cmd = "#ffaa00", f"HOLD : {active_trade['Signal']} सक्रिय है।"
-            elif adx < 25: color_cmd, txt_cmd = "#a0aec0", "✋ WAIT: मार्केट साइडवेज है (Chop Zone)। ट्रेड नहीं ले सकते।"
+            elif adx < 22: color_cmd, txt_cmd = "#a0aec0", "✋ WAIT: मार्केट साइडवेज है (Chop Zone)। ट्रेड नहीं ले सकते।"
             elif last['AI_Score'] == 100: color_cmd, txt_cmd = "#00ff66", f"🚀 EXECUTE: {last['Signal']} अभी! ट्रेंड मजबूत है।"
-            else: color_cmd, txt_cmd = "#a0aec0", "WAIT: परफेक्ट सेटअप का इंतज़ार है।"
+            else: color_cmd, txt_cmd = "#a0aec0", "WAIT: परफेक्ट सेटअप का इंतज़ार है (Price VWAP/200 EMA के पास)।"
             
             st.markdown(f"<div style='background:#14181f; padding:15px; border-radius:10px; border-left:5px solid {color_cmd}; color:{color_cmd}; font-weight:700; margin-bottom:15px; font-size:16px;'>{txt_cmd}</div>", unsafe_allow_html=True)
 
@@ -281,7 +288,7 @@ with tab1:
             with col_met1:
                 source_txt = "Shoonya Live API" if st.session_state.shoonya_token else "YFinance"
                 st.metric(f"NIFTY SPOT ({source_txt})", f"₹{curr_p:,}", f"{pts} pts")
-                st.markdown(f"<div style='background:#14181f; padding:10px; border-radius:8px; border:1px solid #2d3748;'>TREND (ADX): <span style='color:{'#00ff66' if adx>=25 else '#ff3333'}; font-weight:700;'>{round(adx,1)} ({'Trending' if adx>=25 else 'Chop Zone'})</span></div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='background:#14181f; padding:10px; border-radius:8px; border:1px solid #2d3748;'>TREND (ADX): <span style='color:{'#00ff66' if adx>=22 else '#ff3333'}; font-weight:700;'>{round(adx,1)} ({'Trending' if adx>=22 else 'Chop Zone'})</span></div>", unsafe_allow_html=True)
             
             with col_met2:
                 if active_trade is not None and not is_eod_ui:
@@ -302,8 +309,8 @@ with tab1:
 
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='Spot Price', line=dict(color='#deff9a', width=2.5)))
-            fig.add_trace(go.Scatter(x=df.index, y=df['EMA_9'], name='9 EMA', line=dict(color='#00ff66', width=1, dash='dot')))
-            fig.add_trace(go.Scatter(x=df.index, y=df['EMA_21'], name='21 EMA', line=dict(color='#ff3333', width=1, dash='dot')))
+            fig.add_trace(go.Scatter(x=df.index, y=df['Baseline'], name='VWAP', line=dict(color='#00ffff', width=1.5, dash='dash')))
+            fig.add_trace(go.Scatter(x=df.index, y=df['EMA_200'], name='200 EMA', line=dict(color='#ffaa00', width=2, dash='dot')))
             fig.update_layout(template='plotly_dark', paper_bgcolor='#0b0e11', plot_bgcolor='#0b0e11', height=380, margin=dict(l=0,r=0,t=0,b=0), xaxis=dict(showgrid=False), yaxis=dict(gridcolor='#2d3748'))
             st.plotly_chart(fig, use_container_width=True)
             
@@ -327,7 +334,7 @@ with tab2:
                     if s_trade is not None:
                         color = "#00ff66" if s_trade['Direction'] == 'LONG' else "#ff3333"
                         st.markdown(f"<div class='ex-card' style='border-color:{color};'><span class='status-badge' style='background:{'rgba(0,255,102,0.1)' if color=='#00ff66' else 'rgba(255,51,51,0.1)'}; color:{color};'>{name} {s_trade['Direction']}</span><h3 style='color:{color}; margin:10px 0;'>ENTRY: ₹{s_trade['Entry']}</h3>LTP: {curr_p} | Tgt: {s_trade['Target']}</div>", unsafe_allow_html=True)
-                    elif adx_s < 25: st.markdown(f"<div class='ex-card' style='color:#a0aec0;'><h3>{name}</h3>LTP: {curr_p} | Sideways (ADX:{round(adx_s,1)})</div>", unsafe_allow_html=True)
+                    elif adx_s < 22: st.markdown(f"<div class='ex-card' style='color:#a0aec0;'><h3>{name}</h3>LTP: {curr_p} | Sideways (ADX:{round(adx_s,1)})</div>", unsafe_allow_html=True)
                     else: st.markdown(f"<div class='ex-card'><h3>{name}</h3>LTP: {curr_p} | Wait Setup...</div>", unsafe_allow_html=True)
                 col_idx += 1
         except: pass

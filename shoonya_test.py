@@ -9,16 +9,16 @@ import datetime
 import pytz
 
 # ==============================================================================
-# 1. 🔑 SHOONYA API CREDENTIALS (यहाँ अपनी डिटेल्स डालें)
+# 1. 🔑 SHOONYA API CREDENTIALS 
 # ==============================================================================
 SHOONYA_UID = "FN209492" # अपना User ID
-SHOONYA_PWD = "Rahul@1995" # अपना लॉगिन पासवर्ड
-SHOONYA_API_KEY = "3007acd3cd50a75e4e8eb1bfc0e1459a" # Prism से मिली API Key
-SHOONYA_VC = "FN209492_U" # Prism से मिला Vendor Code
-SHOONYA_TOTP_SECRET = "666J4TSFQRM624X75B6WZ32PMUH3477P" # QR कोड के नीचे वाला Secret Code
+SHOONYA_PWD = "Rahul@1995" # अपना पासवर्ड
+SHOONYA_API_KEY = "3007acd3cd50a75e4e8eb1bfc0e1459a" # Prism वाली API Key
+SHOONYA_VC = "FN209492_U" # Vendor Code (आमतौर पर UserID के आगे _U लगा होता है)
+SHOONYA_TOTP_SECRET = "666J4TSFQRM624X75B6WZ32PMUH3477P" # QR कोड के नीचे वाला लंबा Secret Code
 
 # ==============================================================================
-# 2. SHOONYA LIVE DATA ENGINE (Zero Latency)
+# 2. SHOONYA LIVE DATA ENGINE (With Error Diagnostic)
 # ==============================================================================
 try:
     import pyotp
@@ -30,17 +30,24 @@ except ImportError:
     SH_AVAILABLE = False
 
 def shoonya_login():
-    if not SH_AVAILABLE or not SHOONYA_API_KEY or SHOONYA_API_KEY == "YOUR_API_KEY":
-        return None
+    if not SH_AVAILABLE: return None, "pyotp या requests इंस्टॉल नहीं है।"
+    if not SHOONYA_API_KEY or SHOONYA_API_KEY == "YOUR_API_KEY": return None, "API Key नहीं डाली गई है।"
+    
     try:
         pwd_sha256 = hashlib.sha256(SHOONYA_PWD.encode('utf-8')).hexdigest()
         app_key_sha256 = hashlib.sha256(f"{SHOONYA_UID}|{SHOONYA_API_KEY}".encode('utf-8')).hexdigest()
         totp = pyotp.TOTP(SHOONYA_TOTP_SECRET).now()
+        
         payload = {"apkversion": "1.0.0", "uid": SHOONYA_UID, "pwd": pwd_sha256, "factor2": totp, "vc": SHOONYA_VC, "appkey": app_key_sha256, "imei": "abc12345", "source": "API"}
         res = requests.post('https://api.shoonya.com/NorenWClientTP/QuickAuth', data='jData=' + json.dumps(payload)).json()
-        if res.get('stat') == 'Ok': return res.get('susertoken')
-        return None
-    except: return None
+        
+        if res.get('stat') == 'Ok': 
+            return res.get('susertoken'), "Success"
+        else:
+            # 🔴 यह लाइन हमें असली एरर बताएगी
+            return None, res.get('emsg', 'Unknown Shoonya Error')
+    except Exception as e: 
+        return None, f"Code Error: {str(e)}"
 
 def get_shoonya_ltp(token, susertoken):
     if not susertoken: return None
@@ -52,13 +59,12 @@ def get_shoonya_ltp(token, susertoken):
         return None
     except: return None
 
-# Token Mapping for NSE
 SH_TOKENS = {'^NSEI': '26000', 'RELIANCE.NS': '2885', 'HDFCBANK.NS': '1333', 'ICICIBANK.NS': '4963', 'SBIN.NS': '3045', 'TATAMOTORS.NS': '3456', 'INFY.NS': '1594'}
 
 # ==============================================================================
 # 3. CORE CONFIGURATION & THEME
 # ==============================================================================
-st.set_page_config(page_title="Scalper Pro AI v16.0", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Scalper Pro AI v16.1", layout="wide", initial_sidebar_state="collapsed")
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
@@ -76,9 +82,13 @@ st.markdown("""
     """, unsafe_allow_html=True)
 audio_code = """<audio id="alert-sound" autoplay><source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-500.wav" type="audio/wav"></audio>"""
 
-# Auto-Login Session Management (ताकि अकाउंट ब्लॉक न हो)
+# ==============================================================================
+# SHOONYA LOGIN SESSION
+# ==============================================================================
 if 'shoonya_token' not in st.session_state:
-    st.session_state.shoonya_token = shoonya_login()
+    token, msg = shoonya_login()
+    st.session_state.shoonya_token = token
+    st.session_state.shoonya_msg = msg
 
 # ==============================================================================
 # 4. TRADE HISTORY LOGGERS
@@ -116,16 +126,14 @@ def style_results(val):
     return ''
 
 # ==============================================================================
-# 5. HYBRID QUANT ENGINE (YFinance Trend + Shoonya Zero-Latency Execution)
+# 5. HYBRID QUANT ENGINE
 # ==============================================================================
 def calculate_quant_engine(df, symbol):
     if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
 
-    # 🚀 HYBRID MAGIC: Replace delayed YF price with Shoonya Live Price for execution!
-    live_ltp = None
     if st.session_state.shoonya_token and symbol in SH_TOKENS:
         live_ltp = get_shoonya_ltp(SH_TOKENS[symbol], st.session_state.shoonya_token)
-        if live_ltp: df.at[df.index[-1], 'Close'] = live_ltp # Override last candle
+        if live_ltp: df.at[df.index[-1], 'Close'] = live_ltp 
 
     df['EMA_9'] = df['Close'].ewm(span=9, adjust=False).mean()
     df['EMA_21'] = df['Close'].ewm(span=21, adjust=False).mean()
@@ -215,16 +223,19 @@ def calculate_quant_engine(df, symbol):
 # ==============================================================================
 col_h1, col_h2 = st.columns([2, 1])
 with col_h1: 
-    sh_status = "<span style='color:#00ff66; font-size:14px;'>🟢 Shoonya Live API Linked</span>" if st.session_state.shoonya_token else "<span style='color:#ffaa00; font-size:14px;'>🟡 YFinance Delayed Mode</span>"
-    st.markdown(f"<h1 style='margin:0; font-weight:800; color:#e3e9f0;'>QUANT<span style='color:#deff9a;'>SCALPER AI</span> v16 <br>{sh_status}</h1>", unsafe_allow_html=True)
+    if st.session_state.shoonya_token:
+        sh_status = "<span style='color:#00ff66; font-size:14px;'>🟢 Shoonya Live API Linked</span>"
+    else:
+        # 🔴 THIS WILL SHOW THE EXACT ERROR WHY SHOONYA FAILED
+        err_msg = st.session_state.shoonya_msg
+        sh_status = f"<span style='color:#ff3333; font-size:14px;'>🔴 Shoonya Failed: {err_msg}</span>"
+        
+    st.markdown(f"<h1 style='margin:0; font-weight:800; color:#e3e9f0;'>QUANT<span style='color:#deff9a;'>SCALPER AI</span> v16.1 <br>{sh_status}</h1>", unsafe_allow_html=True)
 with col_h2:
     tz_ist = pytz.timezone('Asia/Kolkata'); now = datetime.datetime.now(tz_ist)
     market_status = "CLOSED" if now.hour >= 16 or now.hour < 9 or (now.hour==15 and now.minute>=30) else "LIVE"
     st.markdown(f"<div style='text-align:right; font-weight:700; color:#a0aec0; font-size:16px;'>📅 {now.strftime('%A, %d %b')} | <span style='color:{'#ff3333' if market_status=='CLOSED' else '#00ff66'}'>{now.strftime('%I:%M:%S %p')} IST ({market_status})</span></div>", unsafe_allow_html=True)
 st.markdown("<hr style='border-color:#2d3748; margin: 10px 0 20px 0;'>", unsafe_allow_html=True)
-
-if not SH_AVAILABLE:
-    st.warning("⚠️ 'pyotp' library missing! Create a 'requirements.txt' file in your GitHub with 'yfinance' and 'pyotp' inside it to enable Shoonya API.")
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["⚡ NIFTY INT.", "📡 STOCK INT.", "🚀 SWING RADAR", "📈 P&L ANALYTICS", "👨‍💻 CREATOR"])
 
@@ -304,7 +315,7 @@ with tab2:
         except: pass
 
 # ------------------------------------------------------------------------------
-# TAB 3, 4, 5... (Swing, P&L, Creator) keep same as v15.1
+# TAB 3, 4, 5... 
 # ------------------------------------------------------------------------------
 with tab3:
     st.write("🔥 10 हाई-मोमेंटम स्टॉक्स का डेली चार्ट स्कैन।")

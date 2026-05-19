@@ -73,7 +73,7 @@ SH_TOKENS = {'^NSEI': '26000', '^NSEBANK': '26009', 'RELIANCE.NS': '2885', 'HDFC
 # ==============================================================================
 # 3. CORE CONFIGURATION & THEME 
 # ==============================================================================
-st.set_page_config(page_title="Scalper Pro AI v18.3", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Scalper Pro AI v18.4", layout="wide", initial_sidebar_state="collapsed")
 
 if 'theme' not in st.session_state:
     st.session_state.theme = 'dark' 
@@ -297,7 +297,7 @@ header_col1, header_col2, header_theme = st.columns([10, 10, 3])
 with header_col1: 
     if st.session_state.shoonya_token: sh_status = f"<span style='color:{primary_color}; font-size:14px;'><i class='fa-solid fa-link'></i> Linked</span>"
     else: sh_status = f"<span style='color:#ff3333; font-size:14px;'>🔴 Disabled</span>"
-    st.markdown(f"<h1 style='margin:0; font-weight:800; color:{text_color};'>QUANT<span style='color:{primary_color};'>SCALPER AI</span> v18.3 {sh_status}</h1>", unsafe_allow_html=True)
+    st.markdown(f"<h1 style='margin:0; font-weight:800; color:{text_color};'>QUANT<span style='color:{primary_color};'>SCALPER AI</span> v18.4 {sh_status}</h1>", unsafe_allow_html=True)
 with header_col2:
     tz_ist = pytz.timezone('Asia/Kolkata'); now = datetime.datetime.now(tz_ist)
     market_status = "CLOSED" if now.hour >= 16 or now.hour < 9 or (now.hour==15 and now.minute>=30) else "LIVE"
@@ -396,42 +396,78 @@ try:
         n_hist = load_history()
         if not n_hist.empty: st.dataframe(n_hist[['Time (IST)','Action','Spot Entry','Spot Exit','Points','Result']].style.apply(lambda x: [style_results(val) if x.name == 'Result' else '' for val in x], axis=0), use_container_width=True, hide_index=True)
 
-        # 🚀 🚀 SCALPER CHAT PROMPT SECTION (BUG FIXED) 🚀 🚀
+        # 🚀 🚀 THE MASTER SMC SCALPER CHAT PROMPT 🚀 🚀
         st.markdown("<br><hr style='border-color:#2d3748;'>", unsafe_allow_html=True)
-        st.markdown(f"<h3 style='color:{primary_color};'><i class='fa-solid fa-robot'></i> AI Scalper Analyst</h3>", unsafe_allow_html=True)
+        st.markdown(f"<h3 style='color:{primary_color};'><i class='fa-solid fa-robot'></i> AI SMC Scalper Analyst</h3>", unsafe_allow_html=True)
         
-        if st.button("Generate Current Market Analysis Prompt"):
+        if st.button("Generate Master Market Analysis Prompt"):
             current_vwap_pos = "Above" if curr_p > vwap else "Below"
             current_va_pos = "Inside" if val < curr_p < vah else "Outside (Above VAH)" if curr_p > vah else "Outside (Below VAL)"
             pcr_status = "Very Bullish" if pcr_val and pcr_val > 1.2 else "Bullish" if pcr_val and pcr_val > 1.0 else "Bearish" if pcr_val and pcr_val < 1.0 else "Very Bearish" if pcr_val and pcr_val < 0.8 else "Unknown"
-            atm_strike = int(round(curr_p / 50) * 50) # 🚀 FIXED HERE
+            atm_strike = int(round(curr_p / 50) * 50) 
             
-            scalper_chat_prompt = f"""
-Act as an Institutional Option Scalper and Quant Analyst. Analyze the current market context based Strictly on this data for Nifty 50:
+            scalper_chat_prompt = f"""You are an Institutional Quant Trader, Smart Money Concept (SMC) Analyst, and High-Frequency Option Scalper specializing in NIFTY and BANKNIFTY.
 
-**Market Snapshot:**
-- Nifty Spot: ₹{curr_p} ({pts} pts today)
-- Volatility (ATR 1m): {round(atr,1)} pts (Dynamic Risk)
-- ADX Trend Strength: {round(adx,1)} ({'Strong Trend' if adx>=22 else 'Chop Zone'})
+Analyze the live market strictly using the real-time data provided below. Think like a hedge fund trader, not a retail trader.
 
-**Institutional Context:**
-- Option Chain PCR: {pcr_val} ({pcr_status})
+🔥 LIVE MARKET DATA
+- Nifty Spot Price: ₹{curr_p}
+- Day Change: {pts} pts
+- Current ATR (1m): {round(atr,1)}
+- ADX Trend Strength: {round(adx,1)}
+- VWAP / POC: ₹{round(vwap,1)}
+- VAH: ₹{round(vah,1)}
+- VAL: ₹{round(val,1)}
+- Previous Day High (PDH): {pdh}
+- Previous Day Low (PDL): {pdl}
+- PCR Data: {pcr_val}
+- PCR Bias: {pcr_status}
 - BankNifty Alignment: {bn_trend}
-- Price vs VWAP POC: {current_vwap_pos}
-
-**Liquidity & Traps:**
-- Value Area Status: {current_va_pos}
-- PDH/PDL: {pdh} / {pdl}
 - Current AI Signal: {ai_msg}
+- Price Position vs VWAP: {current_vwap_pos}
+- Value Area Position: {current_va_pos}
 
-Given this context, tell me:
-1. Is it safe to execute a scalp right now? Why or why not based on 'Smart Money' alignment?
-2. If I had to take a trade within the next 5 minutes, would the probability favor buying {atm_strike} CALL (CE) or PUT (PE)? State the primary institutional reason.
-3. Based on the current ATR of {round(atr,1)}, what should be my maximum Spot Stop-Loss in points for this scalp to avoid being stopped out by noise?
+📊 ADVANCED ANALYSIS REQUIRED
+Perform analysis in these exact steps:
 
-Be extremely concise and professional.
+1️⃣ MARKET STRUCTURE
+Determine whether market is: Trending, Reversal, Range-bound, Liquidity trap, or Breakout accumulation. Mention institutional bias.
+
+2️⃣ SMART MONEY ANALYSIS
+Identify: Liquidity sweeps, Stop hunt zones, Fake breakout probability, VWAP manipulation, PDH/PDL raid possibility. Whether institutions are accumulating CALLS or PUTS.
+
+3️⃣ OPTIONS FLOW ANALYSIS
+Based on PCR, Trend strength, ATR, BankNifty alignment, and VWAP positioning: Tell which side has higher probability (CE buyers or PE buyers). Mention expected move direction for next 5–15 minutes.
+
+4️⃣ EXECUTION DECISION
+Give only ONE clear action: BUY CE, BUY PE, or WAIT / NO TRADE.
+If trade is recommended provide:
+- Best {atm_strike} Strike (CE/PE)
+- Spot entry
+- Spot target
+- Spot stop-loss
+- Estimated probability %
+- Risk/Reward ratio
+- Trade holding time estimate
+
+5️⃣ RISK FILTER
+Reject trade if: ADX weak, Chop zone, Volatility trap, Low institutional confirmation, BankNifty divergence.
+
+6️⃣ SCALPER PSYCHOLOGY
+Give one-line professional instruction like: "Avoid emotional entries." or "Wait for liquidity confirmation."
+
+⚠️ STRICT RULES
+Be concise. No generic advice. No educational explanation. Speak like a professional prop-desk scalper. Prioritize capital protection over trade frequency. If setup quality is below 80%, recommend NO TRADE.
+
+Finally output: 
+✅ Market Bias: 
+✅ Institutional Direction: 
+✅ Best Trade: 
+✅ Confidence Score: 
+✅ Trap Warning: 
+✅ Final Verdict:
 """
-            st.text_area("Copy this prompt into your Scalper Chat:", value=scalper_chat_prompt, height=450)
+            st.text_area("Copy this prompt and paste it into ChatGPT/Claude:", value=scalper_chat_prompt, height=450)
 
 except Exception as e: st.error(f"Error Nifty: {e}")
 

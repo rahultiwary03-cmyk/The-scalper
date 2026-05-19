@@ -14,10 +14,10 @@ import json
 # 1. 🔑 SHOONYA API CREDENTIALS 
 # ==============================================================================
 SHOONYA_UID = "FN209492" 
-SHOONYA_PWD = "YOUR_PASSWORD" 
-SHOONYA_API_KEY = "YOUR_API_KEY" 
+SHOONYA_PWD = "Rahul@1995" 
+SHOONYA_API_KEY = "3007acd3cd50a75e4e8eb1bfc0e1459a" 
 SHOONYA_VC = "FN209492_U" 
-SHOONYA_TOTP_SECRET = "YOUR_TOTP_SECRET" 
+SHOONYA_TOTP_SECRET = "666J4TSFQRM624X75B6WZ32PMUH3477P" 
 
 # ==============================================================================
 # 2. SHOONYA LIVE DATA ENGINE

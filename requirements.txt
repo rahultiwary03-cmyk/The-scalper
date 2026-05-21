@@ -1,8 +1,7 @@
 streamlit
 yfinance
-pyotp
-plotly
 pandas
 numpy
-requests
+plotly
 pytz
+requests

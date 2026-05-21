@@ -9,6 +9,7 @@ import datetime
 import pytz
 import requests
 import json
+import concurrent.futures  # 🚀 MULTITHREADING ENGINE ADDED
 
 # ==============================================================================
 # 1. 🔑 SHOONYA API CREDENTIALS 
@@ -73,7 +74,7 @@ SH_TOKENS = {'^NSEI': '26000', '^NSEBANK': '26009', 'RELIANCE.NS': '2885', 'HDFC
 # ==============================================================================
 # 3. CORE CONFIGURATION & THEME 
 # ==============================================================================
-st.set_page_config(page_title="Scalper Pro AI v18.7", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Scalper Pro AI v18.8", layout="wide", initial_sidebar_state="collapsed")
 
 if 'theme' not in st.session_state:
     st.session_state.theme = 'dark' 
@@ -144,8 +145,13 @@ def safe_series(d, col):
     if isinstance(s, pd.DataFrame): return s.iloc[:, 0]
     return s
 
+# 🚀 SMART CACHING: Daily data only fetched once every 30 minutes
+@st.cache_data(ttl=1800)
+def fetch_daily_data_cached():
+    return yf.download('^NSEI', period='5d', interval='1d', progress=False)
+
 # ==============================================================================
-# 5. THE ANTI-REPAINT SMC ENGINE (v18.7)
+# 5. THE ANTI-REPAINT SMC ENGINE
 # ==============================================================================
 def calculate_quant_engine(df, symbol, banknifty_df=None, daily_df=None):
     if st.session_state.shoonya_token and symbol in SH_TOKENS:
@@ -192,20 +198,10 @@ def calculate_quant_engine(df, symbol, banknifty_df=None, daily_df=None):
     
     start_idx = 30 
     for i in range(start_idx, len(df)):
-        # 🚀 ANTI-REPAINT VARIABLES
-        # Context is checked on completely closed previous candle (i-1)
-        prev_c = float(df['Close'].iloc[i-1])
-        prev_h = float(df['High'].iloc[i-1])
-        prev_l = float(df['Low'].iloc[i-1])
-        prev_baseline = float(df['Baseline'].iloc[i-1])
-        prev_adx = float(df['ADX_14'].iloc[i-1])
-        prev_atr = float(df['ATR_14'].iloc[i-1])
+        prev_c = float(df['Close'].iloc[i-1]); prev_h = float(df['High'].iloc[i-1]); prev_l = float(df['Low'].iloc[i-1])
+        prev_baseline = float(df['Baseline'].iloc[i-1]); prev_adx = float(df['ADX_14'].iloc[i-1]); prev_atr = float(df['ATR_14'].iloc[i-1])
 
-        # Trigger is checked on current candle's extremes (i)
-        curr_h = float(df['High'].iloc[i])
-        curr_l = float(df['Low'].iloc[i])
-        curr_o = float(df['Open'].iloc[i])
-        curr_c = float(df['Close'].iloc[i])
+        curr_h = float(df['High'].iloc[i]); curr_l = float(df['Low'].iloc[i]); curr_o = float(df['Open'].iloc[i]); curr_c = float(df['Close'].iloc[i])
         
         ist_time = df.index[i].tz_convert('Asia/Kolkata')
         is_trade_window = (ist_time.hour == 9 and ist_time.minute >= 20) or (ist_time.hour > 9 and ist_time.hour < 15)
@@ -213,34 +209,23 @@ def calculate_quant_engine(df, symbol, banknifty_df=None, daily_df=None):
         
         score, trend_dir, msg, entry_price = 0, 0, "✋ WAIT: Setup not aligned.", 0.0
         
-        # 🚀 THE LOCK LATCH (Context locked from closed candle avoids repainting)
         if is_trade_window and not is_eod and prev_adx >= 22:
-            # BEARISH CONTEXT (Price closed below VWAP previously)
             if prev_c < prev_baseline and bn_bearish:
-                if curr_l < prev_l: # Trigger: Current tick breaks previous low
-                    score, trend_dir = 100, -1
-                    entry_price = min(prev_l, curr_o) # Entry is exactly at the breakdown point
-                    msg = "📉 EXECUTE PE: Breakdown Locked."
+                if curr_l < prev_l: 
+                    score, trend_dir, entry_price, msg = 100, -1, min(prev_l, curr_o), "📉 EXECUTE PE: Breakdown Locked."
                 else: msg = "⚠️ SMC Aligned (Below VWAP), Waiting for Low Breakdown (PE)."
-            
-            # BULLISH CONTEXT (Price closed above VWAP previously)
             elif prev_c > prev_baseline and bn_bullish:
-                if curr_h > prev_h: # Trigger: Current tick breaks previous high
-                    score, trend_dir = 100, 1
-                    entry_price = max(prev_h, curr_o) # Entry is exactly at the breakout point
-                    msg = "🚀 EXECUTE CE: Breakout Locked."
+                if curr_h > prev_h: 
+                    score, trend_dir, entry_price, msg = 100, 1, max(prev_h, curr_o), "🚀 EXECUTE CE: Breakout Locked."
                 else: msg = "⚠️ SMC Aligned (Above VWAP), Waiting for High Breakout (CE)."
         
         if is_eod: msg = "⏱️ EOD: Trading window closed."
-        df.at[df.index[i], 'Msg'] = msg
-        df.at[df.index[i], 'AI_Score'] = score
+        df.at[df.index[i], 'Msg'] = msg; df.at[df.index[i], 'AI_Score'] = score
         
         if active_trade is not None:
             trade_closed, status_msg, exit_price = False, "", 0.0
-            if is_eod: 
-                status_msg, trade_closed, exit_price = "⏱️ EOD SQUARE-OFF", True, curr_c
+            if is_eod: status_msg, trade_closed, exit_price = "⏱️ EOD SQUARE-OFF", True, curr_c
             elif active_trade['Direction'] == 'LONG':
-                # Exact checking using high/low avoids missing wick targets
                 if curr_h >= active_trade['Target']: status_msg, trade_closed, exit_price = "🎯 TARGET HIT (+PROFIT)", True, active_trade['Target']
                 elif curr_l <= active_trade['StopLoss']: status_msg, trade_closed, exit_price = "🛑 SL HIT (-LOSS)", True, active_trade['StopLoss']
             elif active_trade['Direction'] == 'SHORT':
@@ -255,10 +240,8 @@ def calculate_quant_engine(df, symbol, banknifty_df=None, daily_df=None):
             if score == 100 and trend_dir != 0 and is_trade_window:
                 atm_strike = int(round(entry_price / 50) * 50)
                 sl_pts = max(18.0, round(prev_atr * 1.5, 1)); tgt_pts = round(sl_pts * 2.0, 1)
-                
                 if trend_dir == 1: tgt, sl, direction, t_type = entry_price + tgt_pts, entry_price - sl_pts, 'LONG', f'{atm_strike} CE'
                 else: tgt, sl, direction, t_type = entry_price - tgt_pts, entry_price + sl_pts, 'SHORT', f'{atm_strike} PE'
-                
                 active_trade = {'Type': t_type, 'Signal': f'🟢 BUY NIFTY {t_type}', 'Entry': round(entry_price,1), 'Target': round(tgt,1), 'StopLoss': round(sl,1), 'Direction': direction}
                 df.at[df.index[i], 'Signal'] = active_trade['Signal']
     return df, active_trade
@@ -270,7 +253,7 @@ header_col1, header_col2, header_theme = st.columns([10, 10, 3])
 with header_col1: 
     if st.session_state.shoonya_token: sh_status = f"<span style='color:{primary_color}; font-size:14px;'><i class='fa-solid fa-link'></i> Shoonya API Linked</span>"
     else: sh_status = f"<span style='color:#ff3333; font-size:14px;'>🔴 Shoonya API: {st.session_state.get('shoonya_msg', 'Disabled')}</span>"
-    st.markdown(f"<h1 style='margin:0; font-weight:800; color:{text_color};'>QUANT<span style='color:{primary_color};'>SCALPER AI</span> v18.7 {sh_status}</h1>", unsafe_allow_html=True)
+    st.markdown(f"<h1 style='margin:0; font-weight:800; color:{text_color};'>QUANT<span style='color:{primary_color};'>SCALPER AI</span> v18.8 <span style='font-size:12px; color:#00ffff;'>⚡TURBO</span> <br>{sh_status}</h1>", unsafe_allow_html=True)
 with header_col2:
     tz_ist = pytz.timezone('Asia/Kolkata'); now = datetime.datetime.now(tz_ist)
     market_status = "CLOSED" if now.hour >= 16 or now.hour < 9 or (now.hour==15 and now.minute>=30) else "LIVE"
@@ -281,10 +264,20 @@ with header_theme:
 st.markdown("<hr style='border-color:#2d3748; margin: 10px 0 15px 0;'>", unsafe_allow_html=True)
 
 try:
-    data = yf.download('^NSEI', period='1d', interval='1m', progress=False)
-    bn_data = yf.download('^NSEBANK', period='1d', interval='1m', progress=False)
-    daily_data = yf.download('^NSEI', period='5d', interval='1d', progress=False)
-    pcr_val = get_nse_pcr() 
+    # 🚀 TURBO MULTITHREADING FETCH
+    def fetch_nifty(): return yf.download('^NSEI', period='1d', interval='1m', progress=False)
+    def fetch_bn(): return yf.download('^NSEBANK', period='1d', interval='1m', progress=False)
+    
+    daily_data = fetch_daily_data_cached() # Hits cache, 0 latency
+    
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        f_nifty = executor.submit(fetch_nifty)
+        f_bn = executor.submit(fetch_bn)
+        f_pcr = executor.submit(get_nse_pcr)
+        
+        data = f_nifty.result()
+        bn_data = f_bn.result()
+        pcr_val = f_pcr.result()
     
     for d in [data, bn_data, daily_data]:
         if not d.empty:
@@ -337,7 +330,7 @@ try:
                 <div class='ex-card' style='border: 2px solid {color_trade};'>
                     <div style='display:flex; justify-content:space-between;'>
                         <span class='status-badge' style='background:{bg_color}; border: 1px solid {color_trade}; color:{color_trade};'>{active_trade['Direction']} ACTIVE</span>
-                        <span style='color:#00ffff; font-size: 12px;'><i class="fa-solid fa-lock"></i> Anti-Repaint Lock</span>
+                        <span style='color:#00ffff; font-size: 12px;'><i class="fa-solid fa-shield"></i> ATR Dynamic SL</span>
                     </div>
                     <h2 style='margin:10px 0; color:{text_color};'>SPOT ENTRY: ₹{active_trade['Entry']}</h2>
                     <div style='color:{execute_color}; font-weight:700; font-size:20px;'>TARGET: ₹{active_trade['Target']} (1:2 RR)</div>

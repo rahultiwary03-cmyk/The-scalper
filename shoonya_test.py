@@ -14,14 +14,23 @@ import yfinance as yf
 
 
 APP_NAME = "QuantScalper AI Pro"
-APP_VERSION = "v20.0"
+APP_VERSION = "v21.0 (Commodity Edition)"
 IST = pytz.timezone("Asia/Kolkata")
 DATA_DIR = Path("data")
 TRADE_BOOK = DATA_DIR / "trade_book.csv"
 SIGNAL_BOOK = DATA_DIR / "signal_book.csv"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 
+# Added Asset Definitions for Index and Commodities
+ASSETS = {
+    "NIFTY": {"ticker": "^NSEI", "align": "^NSEBANK", "type": "INDEX", "open": "09:15", "close": "15:30", "step": 50},
+    "CRUDE OIL": {"ticker": "CL=F", "align": "BZ=F", "type": "COMMODITY", "open": "09:00", "close": "23:30", "step": 1},
+    "GOLD": {"ticker": "GC=F", "align": "SI=F", "type": "COMMODITY", "open": "09:00", "close": "23:30", "step": 10},
+    "NATURAL GAS": {"ticker": "NG=F", "align": "CL=F", "type": "COMMODITY", "open": "09:00", "close": "23:30", "step": 0.1},
+}
+
 BASE_SETTINGS = {
+    "active_asset": "NIFTY",
     "min_confidence": 82,
     "min_adx": 24,
     "volume_multiplier": 1.20,
@@ -33,44 +42,22 @@ BASE_SETTINGS = {
     "cooldown_after_loss_min": 20,
     "max_trades_per_day": 4,
     "first_trade_after": "09:45",
-    "last_trade_before": "14:45",
+    "last_trade_before": "23:15", # Updated for commodity night sessions
 }
 
 TRADE_COLUMNS = [
-    "id",
-    "date",
-    "time",
-    "side",
-    "strike",
-    "entry",
-    "target",
-    "stoploss",
-    "exit",
-    "points",
-    "result",
-    "confidence",
-    "reason",
-    "mistake_tag",
+    "id", "date", "time", "asset", "side", "strike", "entry", "target",
+    "stoploss", "exit", "points", "result", "confidence", "reason", "mistake_tag",
 ]
 
 SIGNAL_COLUMNS = [
-    "id",
-    "date",
-    "time",
-    "side",
-    "strike",
-    "entry",
-    "target",
-    "stoploss",
-    "confidence",
-    "status",
-    "reason",
-    "blocked_by",
+    "id", "date", "time", "asset", "side", "strike", "entry", "target",
+    "stoploss", "confidence", "status", "reason", "blocked_by",
 ]
 
 
 st.set_page_config(
-    page_title=f"{APP_NAME} {APP_VERSION}",
+    page_title=f"{APP_NAME}",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -136,11 +123,17 @@ def in_time_window(ts, settings):
     return start <= ts <= end
 
 
-def market_status(ts):
-    open_time = ts.replace(hour=9, minute=15, second=0, microsecond=0)
-    close_time = ts.replace(hour=15, minute=30, second=0, microsecond=0)
-    if ts.weekday() >= 5:
+def market_status(ts, asset_info):
+    open_h, open_m = parse_hhmm(asset_info["open"])
+    close_h, close_m = parse_hhmm(asset_info["close"])
+    open_time = ts.replace(hour=open_h, minute=open_m, second=0, microsecond=0)
+    close_time = ts.replace(hour=close_h, minute=close_m, second=0, microsecond=0)
+    
+    if asset_info["type"] == "INDEX" and ts.weekday() >= 5:
         return "CLOSED"
+    elif asset_info["type"] == "COMMODITY" and ts.weekday() >= 5: # Global commodities close on weekends
+        return "CLOSED"
+        
     return "LIVE" if open_time <= ts <= close_time else "CLOSED"
 
 
@@ -157,7 +150,9 @@ def fetch_daily(symbol):
 
 
 @st.cache_data(ttl=60)
-def fetch_pcr():
+def fetch_pcr(asset_type):
+    if asset_type != "INDEX":
+        return None  # PCR is not easily fetched for commodities from NSE
     try:
         headers = {
             "User-Agent": "Mozilla/5.0",
@@ -258,12 +253,12 @@ def pcr_bias(pcr):
     return "NEUTRAL"
 
 
-def banknifty_bias(bn):
-    if bn.empty or len(bn) < 60:
+def alignment_bias(align_df):
+    if align_df.empty or len(align_df) < 60:
         return "UNKNOWN"
-    bn = add_indicators(bn)
-    close = safe_series(bn, "Close")
-    last = bn.iloc[-1]
+    align_df = add_indicators(align_df)
+    close = safe_series(align_df, "Close")
+    last = align_df.iloc[-1]
     if close.iloc[-1] > last["VWAP"] and close.iloc[-1] > last["EMA50"] and close.iloc[-1] > close.iloc[-2]:
         return "BULLISH"
     if close.iloc[-1] < last["VWAP"] and close.iloc[-1] < last["EMA50"] and close.iloc[-1] < close.iloc[-2]:
@@ -297,7 +292,7 @@ def trade_stats():
         "today_count": len(today_book),
         "loss_streak": loss_streak,
         "win_rate": round((wins / closed * 100), 1) if closed else 0,
-        "net_points": round(points, 1),
+        "net_points": round(points, 2),
         "last_result": results[-1] if results else "",
     }
 
@@ -315,14 +310,14 @@ def adaptive_settings(settings, stats):
     return adjusted, warnings
 
 
-def build_signal(nifty, banknifty, daily, pcr, settings):
+def build_signal(main_df, align_df, daily, pcr, settings, asset_name, asset_info):
     stats = trade_stats()
     active_settings, guard_warnings = adaptive_settings(settings, stats)
 
-    if nifty.empty or len(nifty) < 80:
-        return None, {"status": "BLOCKED", "reason": "Not enough NIFTY data.", "checks": []}
+    if main_df.empty or len(main_df) < 80:
+        return None, {"status": "BLOCKED", "reason": f"Not enough data for {asset_name}.", "checks": []}
 
-    df = add_indicators(nifty)
+    df = add_indicators(main_df)
     last = df.iloc[-1]
     prev = df.iloc[-2]
     ts = df.index[-1].to_pydatetime()
@@ -331,7 +326,7 @@ def build_signal(nifty, banknifty, daily, pcr, settings):
     adx = float(last["ADX"]) if pd.notna(last["ADX"]) else 0
     vwap = float(last["VWAP"])
     pdh, pdl = previous_day_levels(daily)
-    bn_bias = banknifty_bias(banknifty)
+    align_status = alignment_bias(align_df)
     pcr_state = pcr_bias(pcr)
 
     adx_ref = float(df["ADX"].iloc[-6]) if pd.notna(df["ADX"].iloc[-6]) else 0
@@ -342,7 +337,7 @@ def build_signal(nifty, banknifty, daily, pcr, settings):
     vwap_distance_ok = abs(curr - vwap) <= atr * active_settings["max_vwap_distance_atr"] if atr > 0 else False
     chop_zone = abs(curr - vwap) < max(atr * 0.15, 3) if atr > 0 else True
     time_ok = in_time_window(ts, active_settings)
-    market_ok = market_status(now_ist()) == "LIVE"
+    market_ok = market_status(now_ist(), asset_info) == "LIVE"
     daily_limit_ok = stats["today_count"] < settings["max_trades_per_day"]
 
     bullish_break = (
@@ -356,8 +351,8 @@ def build_signal(nifty, banknifty, daily, pcr, settings):
         and (float(prev["Low"]) - curr) > atr * active_settings["breakout_atr_buffer"]
     )
 
-    ce_context = curr > vwap and curr > float(last["EMA50"]) and bn_bias == "BULLISH"
-    pe_context = curr < vwap and curr < float(last["EMA50"]) and bn_bias == "BEARISH"
+    long_context = curr > vwap and curr > float(last["EMA50"]) and align_status == "BULLISH"
+    short_context = curr < vwap and curr < float(last["EMA50"]) and align_status == "BEARISH"
 
     checks = [
         ("Market live", market_ok),
@@ -368,27 +363,32 @@ def build_signal(nifty, banknifty, daily, pcr, settings):
         ("Volume confirmed", vol_ok),
         ("Not overextended", vwap_distance_ok),
         ("Not in VWAP chop", not chop_zone),
-        ("BankNifty aligned", bn_bias in ["BULLISH", "BEARISH"]),
+        ("Alignment Check", align_status in ["BULLISH", "BEARISH"]),
     ]
 
     blocked_by = [name for name, ok in checks if not ok]
     side = "NO TRADE"
-    if ce_context and bullish_break:
-        side = "CE"
-    elif pe_context and bearish_break:
-        side = "PE"
+    
+    # Adapt naming based on Index (CE/PE) vs Commodity (LONG/SHORT)
+    buy_tag = "CE" if asset_info["type"] == "INDEX" else "LONG"
+    sell_tag = "PE" if asset_info["type"] == "INDEX" else "SHORT"
+
+    if long_context and bullish_break:
+        side = buy_tag
+    elif short_context and bearish_break:
+        side = sell_tag
     else:
-        blocked_by.append("No confirmed CE/PE breakout")
+        blocked_by.append(f"No confirmed {buy_tag}/{sell_tag} breakout")
 
     confluence = sum(1 for _, ok in checks if ok)
     confidence = min(99, int((confluence / len(checks)) * 78))
     if side != "NO TRADE":
         confidence += 12
-    if pcr_state == "BULLISH" and side == "CE":
+    if pcr_state == "BULLISH" and side == buy_tag:
         confidence += 5
-    if pcr_state == "BEARISH" and side == "PE":
+    if pcr_state == "BEARISH" and side == sell_tag:
         confidence += 5
-    if (curr > pdh and side == "CE") or (curr < pdl and side == "PE"):
+    if (curr > pdh and side == buy_tag) or (curr < pdl and side == sell_tag):
         confidence += 4
     confidence = min(confidence, 99)
 
@@ -396,19 +396,21 @@ def build_signal(nifty, banknifty, daily, pcr, settings):
         blocked_by.append(f"Confidence below {active_settings['min_confidence']}%")
 
     status = "READY" if side != "NO TRADE" and not blocked_by else "BLOCKED"
-    strike = int(round(curr / 50) * 50)
+    
+    # Strike calculation only relevant for Index options, FUT for commodity
+    strike = int(round(curr / asset_info["step"]) * asset_info["step"]) if asset_info["type"] == "INDEX" else "FUT"
     risk = max(active_settings["min_sl_points"], atr * active_settings["atr_sl_multiplier"])
 
-    if side == "CE":
+    if side == buy_tag:
         entry = max(curr, float(prev["High"]))
         stoploss = min(entry - risk, float(last["Low"]))
         target = entry + (entry - stoploss) * active_settings["rr_multiplier"]
-        reason = "CE only after close above prior high, range high, VWAP and BankNifty alignment."
-    elif side == "PE":
+        reason = f"{side} only after close above prior high, range high, VWAP and alignment."
+    elif side == sell_tag:
         entry = min(curr, float(prev["Low"]))
         stoploss = max(entry + risk, float(last["High"]))
         target = entry - (stoploss - entry) * active_settings["rr_multiplier"]
-        reason = "PE only after close below prior low, range low, VWAP and BankNifty alignment."
+        reason = f"{side} only after close below prior low, range low, VWAP and alignment."
     else:
         entry = curr
         stoploss = 0
@@ -419,22 +421,23 @@ def build_signal(nifty, banknifty, daily, pcr, settings):
         "id": ts.strftime("%Y%m%d%H%M"),
         "date": ts.strftime("%Y-%m-%d"),
         "time": ts.strftime("%H:%M"),
+        "asset": asset_name,
         "side": side,
         "strike": strike,
-        "entry": round(entry, 1),
-        "target": round(target, 1),
-        "stoploss": round(stoploss, 1),
+        "entry": round(entry, 2),
+        "target": round(target, 2),
+        "stoploss": round(stoploss, 2),
         "confidence": confidence,
         "status": status,
         "reason": reason,
         "blocked_by": ", ".join(dict.fromkeys(blocked_by)),
         "price": round(curr, 2),
-        "vwap": round(vwap, 1),
-        "adx": round(adx, 1),
-        "atr": round(atr, 1),
-        "pdh": round(pdh, 1),
-        "pdl": round(pdl, 1),
-        "bn_bias": bn_bias,
+        "vwap": round(vwap, 2),
+        "adx": round(adx, 2),
+        "atr": round(atr, 2),
+        "pdh": round(pdh, 2),
+        "pdl": round(pdl, 2),
+        "align_status": align_status,
         "pcr": pcr,
         "pcr_state": pcr_state,
         "guard_warnings": guard_warnings,
@@ -452,18 +455,25 @@ def save_signal_once(signal):
 def record_trade(signal, result, exit_price, mistake_tag=""):
     entry = float(signal["entry"])
     side = signal["side"]
-    points = exit_price - entry if side == "CE" else entry - exit_price
+    
+    # Calculate points based on LONG/CE vs SHORT/PE
+    if side in ["CE", "LONG"]:
+        points = exit_price - entry
+    else:
+        points = entry - exit_price
+        
     row = {
         "id": f'{signal["id"]}-{result}',
         "date": now_ist().strftime("%Y-%m-%d"),
         "time": now_ist().strftime("%H:%M:%S"),
+        "asset": signal["asset"],
         "side": side,
         "strike": signal["strike"],
         "entry": entry,
         "target": signal["target"],
         "stoploss": signal["stoploss"],
-        "exit": round(exit_price, 1),
-        "points": round(points, 1),
+        "exit": round(exit_price, 2),
+        "points": round(points, 2),
         "result": result,
         "confidence": signal["confidence"],
         "reason": signal["reason"],
@@ -479,14 +489,14 @@ def css():
         .block-container {padding-top: 1.3rem; padding-left: 1.5rem; padding-right: 1.5rem; max-width: 100%;}
         header, footer, #MainMenu {visibility: hidden;}
         .stApp {background: #080b0f; color: #e6edf3;}
-        .topbar {display:flex; justify-content:space-between; align-items:center; border:1px solid #263241; border-radius:12px; padding:16px 18px; background:#10151d;}
+        .topbar {display:flex; justify-content:space-between; align-items:center; border:1px solid #263241; border-radius:12px; padding:16px 18px; background:#10151d; margin-bottom: 15px;}
         .brand {font-size:28px; font-weight:900; color:#e6edf3;}
         .accent {color:#deff9a;}
         .subtle {color:#8b949e; font-size:12px; font-weight:700;}
         .pill {display:inline-block; padding:5px 10px; border-radius:999px; border:1px solid #263241; font-size:12px; font-weight:900;}
         .card {background:#10151d; border:1px solid #263241; border-radius:12px; padding:16px; min-height:104px;}
         .label {font-size:11px; color:#8b949e; text-transform:uppercase; font-weight:900;}
-        .value {font-size:27px; color:#deff9a; font-weight:900; margin-top:5px;}
+        .value {font-size:24px; color:#deff9a; font-weight:900; margin-top:5px;}
         .small {font-size:12px; color:#8b949e; font-weight:700;}
         .command {border-radius:12px; padding:18px; border:1px solid #263241; background:#10151d; margin:14px 0;}
         .command-ready {border-left:6px solid #00ff66;}
@@ -503,7 +513,7 @@ def css():
     )
 
 
-def render_header(status):
+def render_header(status, active_asset):
     ts = now_ist()
     color = "#00ff66" if status == "LIVE" else "#ff4d4d"
     st.markdown(
@@ -511,10 +521,10 @@ def render_header(status):
         <div class="topbar">
             <div>
                 <div class="brand">QUANT<span class="accent">SCALPER AI</span> PRO <span class="subtle">{APP_VERSION}</span></div>
-                <div class="subtle">Manual execution terminal | Data, rules, journal and mistake control</div>
+                <div class="subtle">Multi-Asset Execution Terminal | Options & Commodities Futures</div>
             </div>
             <div style="text-align:right">
-                <span class="pill" style="color:{color};">{status}</span>
+                <span class="pill" style="color:{color};">{active_asset} {status}</span>
                 <div class="subtle" style="margin-top:8px;">{ts.strftime("%d %b %Y | %I:%M:%S %p IST")}</div>
             </div>
         </div>
@@ -536,7 +546,7 @@ def render_card(label, value, sub="", color="#deff9a"):
     )
 
 
-def render_chart(df, signal):
+def render_chart(df, signal, asset_name):
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df.index, y=df["VAH"], line=dict(width=0), showlegend=False))
     fig.add_trace(
@@ -549,7 +559,7 @@ def render_chart(df, signal):
             name="Value Area",
         )
     )
-    fig.add_trace(go.Scatter(x=df.index, y=df["Close"], name="NIFTY", line=dict(color="#deff9a", width=2.4)))
+    fig.add_trace(go.Scatter(x=df.index, y=df["Close"], name=asset_name, line=dict(color="#deff9a", width=2.4)))
     fig.add_trace(go.Scatter(x=df.index, y=df["VWAP"], name="VWAP", line=dict(color="#00ffff", width=1.5, dash="dash")))
     fig.add_hline(y=signal["price"], line_color="#ffffff", line_width=1, annotation_text="LTP")
     if signal["status"] == "READY":
@@ -574,45 +584,56 @@ def render_chart(df, signal):
 
 
 def render_settings(settings):
-    with st.expander("Risk Engine Settings", expanded=False):
-        c1, c2, c3, c4 = st.columns(4)
+    with st.expander("⚙️ Risk Engine Settings & Asset Selection", expanded=False):
+        c_ast, c1, c2, c3 = st.columns(4)
+        settings["active_asset"] = c_ast.selectbox("Select Asset to Trade", list(ASSETS.keys()), index=list(ASSETS.keys()).index(settings.get("active_asset", "NIFTY")))
         settings["min_confidence"] = c1.slider("Minimum confidence", 70, 95, int(settings["min_confidence"]))
         settings["min_adx"] = c2.slider("Minimum ADX", 18, 35, int(settings["min_adx"]))
         settings["volume_multiplier"] = c3.slider("Volume multiplier", 1.0, 2.0, float(settings["volume_multiplier"]), 0.05)
+        
+        c4, c5, c6, c7, c8 = st.columns(5)
         settings["max_trades_per_day"] = c4.slider("Max trades per day", 1, 8, int(settings["max_trades_per_day"]))
-        c5, c6, c7, c8 = st.columns(4)
         settings["rr_multiplier"] = c5.slider("Reward risk", 1.0, 3.0, float(settings["rr_multiplier"]), 0.25)
         settings["atr_sl_multiplier"] = c6.slider("ATR SL multiplier", 1.0, 2.5, float(settings["atr_sl_multiplier"]), 0.1)
         settings["first_trade_after"] = c7.text_input("First trade after", settings["first_trade_after"])
         settings["last_trade_before"] = c8.text_input("Last trade before", settings["last_trade_before"])
-        if st.button("Save Settings"):
+        
+        if st.button("Save & Apply Settings"):
             save_settings(settings)
-            st.success("Settings saved.")
+            st.success("Settings saved successfully. Page will reload.")
+            time.sleep(1)
+            st.rerun()
 
 
 def render_manual_trade_panel(signal):
-    st.subheader("Manual Shoonya Execution Plan")
+    st.subheader("Manual Execution Plan")
     if signal["status"] != "READY":
         st.error("Trade blocked. Do not take manual trade.")
         st.caption(signal["blocked_by"])
         return
 
     side = signal["side"]
-    option_name = f'NIFTY {signal["strike"]} {side}'
+    asset = signal["asset"]
+    
+    if signal["strike"] == "FUT":
+        instrument_name = f"{asset} FUTURES {side}"
+    else:
+        instrument_name = f'{asset} {signal["strike"]} {side}'
+        
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Option", option_name)
+    c1.metric("Instrument", instrument_name)
     c2.metric("Spot Entry", signal["entry"])
     c3.metric("Spot Target", signal["target"])
     c4.metric("Spot SL", signal["stoploss"])
 
-    st.warning("Take this trade manually in Shoonya only if the live Shoonya price still matches this setup.")
-    confirm = st.checkbox("I checked Shoonya app price, spread, quantity and risk before entering.")
+    st.warning("Take this trade manually in your broker terminal ONLY if the live price still matches this setup.")
+    confirm = st.checkbox("I checked broker app price, spread, quantity and risk before entering.")
     if confirm:
         save_signal_once(signal)
         st.success("Signal saved. After exit, record result below.")
 
     with st.form("record_result"):
-        exit_price = st.number_input("Spot exit price", value=float(signal["target"]), step=0.5)
+        exit_price = st.number_input("Spot exit price", value=float(signal["target"]), step=0.1)
         result = st.selectbox("Result", ["TARGET HIT (+PROFIT)", "SL HIT (-LOSS)", "MANUAL EXIT", "SKIPPED"])
         mistake = st.selectbox(
             "Mistake tag",
@@ -637,36 +658,45 @@ def main():
     ensure_files()
     css()
     settings = load_settings()
-    status = market_status(now_ist())
-    render_header(status)
+    
+    active_asset = settings.get("active_asset", "NIFTY")
+    asset_info = ASSETS[active_asset]
+    status = market_status(now_ist(), asset_info)
+    
+    render_header(status, active_asset)
     render_settings(settings)
 
     try:
-        nifty = fetch_intraday("^NSEI")
-        banknifty = fetch_intraday("^NSEBANK")
-        daily = fetch_daily("^NSEI")
-        pcr = fetch_pcr()
+        main_df = fetch_intraday(asset_info["ticker"])
+        align_df = fetch_intraday(asset_info["align"])
+        daily = fetch_daily(asset_info["ticker"])
+        pcr = fetch_pcr(asset_info["type"])
     except Exception as exc:
-        st.error(f"Data fetch error: {exc}")
+        st.error(f"Data fetch error for {active_asset}: {exc}")
         time.sleep(8)
         st.rerun()
 
-    signal, context = build_signal(nifty, banknifty, daily, pcr, settings)
+    signal, context = build_signal(main_df, align_df, daily, pcr, settings, active_asset, asset_info)
+    
     if signal is None:
         st.error(context["reason"])
         time.sleep(8)
         st.rerun()
 
     command_class = "command-ready" if signal["status"] == "READY" else "command-blocked"
-    command = (
-        f'BUY NIFTY {signal["strike"]} {signal["side"]} | Confidence {signal["confidence"]}%'
-        if signal["status"] == "READY"
-        else f'NO TRADE | {signal["blocked_by"]}'
-    )
+    
+    if signal["status"] == "READY":
+        if asset_info["type"] == "INDEX":
+            command = f'BUY {active_asset} {signal["strike"]} {signal["side"]} | Confidence {signal["confidence"]}%'
+        else:
+            command = f'ENTER {signal["side"]} {active_asset} FUTURES | Confidence {signal["confidence"]}%'
+    else:
+        command = f'NO TRADE | {signal["blocked_by"]}'
+
     st.markdown(
         f"""
         <div class="command {command_class}">
-            <div class="command-title">AI Trade Command</div>
+            <div class="command-title">AI Trade Command [{active_asset}]</div>
             <div class="command-main">{command}</div>
             <div class="small">{signal["reason"]}</div>
         </div>
@@ -680,21 +710,29 @@ def main():
 
     stats = trade_stats()
     c1, c2, c3, c4, c5 = st.columns(5)
-    render_card("NIFTY Spot", f'Rs {signal["price"]}', f'VWAP Rs {signal["vwap"]}')
+    render_card(f"{active_asset} LTP", f'{signal["price"]}', f'VWAP {signal["vwap"]}')
+    
     with c2:
-        color = "#00ff66" if signal["bn_bias"] == "BULLISH" else "#ff4d4d" if signal["bn_bias"] == "BEARISH" else "#ffaa00"
-        render_card("BankNifty", signal["bn_bias"], "Alignment filter", color)
+        color = "#00ff66" if signal["align_status"] == "BULLISH" else "#ff4d4d" if signal["align_status"] == "BEARISH" else "#ffaa00"
+        align_label = "BankNifty" if asset_info["type"] == "INDEX" else "Global Correlation"
+        render_card(align_label, signal["align_status"], "Alignment filter", color)
+        
     with c3:
         render_card("ADX / ATR", f'{signal["adx"]} / {signal["atr"]}', "Trend and risk")
+        
     with c4:
-        render_card("PCR", signal["pcr"] if signal["pcr"] else "Error", signal["pcr_state"])
+        if asset_info["type"] == "INDEX":
+            render_card("PCR", signal["pcr"] if signal["pcr"] else "Error", signal["pcr_state"])
+        else:
+            render_card("PCR", "N/A", "Not applicable for Commodity", "#8b949e")
+            
     with c5:
         color = "#00ff66" if stats["net_points"] >= 0 else "#ff4d4d"
         render_card("Journal P/L", f'{stats["net_points"]} pts', f'Win rate {stats["win_rate"]}%', color)
 
     left, right = st.columns([2.2, 1])
     with left:
-        render_chart(context["df"], signal)
+        render_chart(context["df"], signal, active_asset)
     with right:
         st.subheader("Filter Checklist")
         checks_df = pd.DataFrame(

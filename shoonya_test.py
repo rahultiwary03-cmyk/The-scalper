@@ -73,7 +73,7 @@ SH_TOKENS = {'^NSEI': '26000', '^NSEBANK': '26009', 'RELIANCE.NS': '2885', 'HDFC
 # ==============================================================================
 # 3. CORE CONFIGURATION & THEME 
 # ==============================================================================
-st.set_page_config(page_title="Scalper Pro AI v18.6", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Scalper Pro AI v18.7", layout="wide", initial_sidebar_state="collapsed")
 
 if 'theme' not in st.session_state:
     st.session_state.theme = 'dark' 
@@ -145,15 +145,13 @@ def safe_series(d, col):
     return s
 
 # ==============================================================================
-# 5. THE ULTIMATE ZERO-LATENCY SMC ENGINE (v18.6 - "द बेस्ट सेटअप")
+# 5. THE ANTI-REPAINT SMC ENGINE (v18.7)
 # ==============================================================================
 def calculate_quant_engine(df, symbol, banknifty_df=None, daily_df=None):
-    # 🚀 Live LTP Update
     if st.session_state.shoonya_token and symbol in SH_TOKENS:
         live_ltp = get_shoonya_ltp(SH_TOKENS[symbol], st.session_state.shoonya_token)
         if live_ltp: df.at[df.index[-1], 'Close'] = live_ltp 
 
-    # 🚀 SMC context setup
     pdh, pdl = 0, 0
     if daily_df is not None and len(daily_df) > 1:
         try:
@@ -181,7 +179,6 @@ def calculate_quant_engine(df, symbol, banknifty_df=None, daily_df=None):
 
     high, low, close = safe_series(df, 'High'), safe_series(df, 'Low'), safe_series(df, 'Close')
     
-    # 🚀 ADX & ATR Setup
     plus_dm = high.diff(); minus_dm = low.diff()
     plus_dm[plus_dm < 0] = 0; minus_dm[minus_dm > 0] = 0
     tr = pd.concat([high - low, (high - close.shift(1)).abs(), (low - close.shift(1)).abs()], axis=1).max(axis=1)
@@ -193,64 +190,76 @@ def calculate_quant_engine(df, symbol, banknifty_df=None, daily_df=None):
     df['AI_Score'], df['Signal'], df['Entry'], df['Target'], df['StopLoss'], df['Status'], df['Msg'] = 0, 'WAIT ⏳', 0.0, 0.0, 0.0, "", "WAIT: Scanning SMC Setup..."
     active_trade = None
     
-    start_idx = 30 # Backtest from 30 bars onwards for ATR/VWAP sanity
+    start_idx = 30 
     for i in range(start_idx, len(df)):
-        # 🚀 Current context data
-        curr_c = round(float(df['Close'].iloc[i]), 2)
-        adx = float(df['ADX_14'].iloc[i]); atr = float(df['ATR_14'].iloc[i]); baseline_val = float(df['Baseline'].iloc[i])
+        # 🚀 ANTI-REPAINT VARIABLES
+        # Context is checked on completely closed previous candle (i-1)
+        prev_c = float(df['Close'].iloc[i-1])
+        prev_h = float(df['High'].iloc[i-1])
+        prev_l = float(df['Low'].iloc[i-1])
+        prev_baseline = float(df['Baseline'].iloc[i-1])
+        prev_adx = float(df['ADX_14'].iloc[i-1])
+        prev_atr = float(df['ATR_14'].iloc[i-1])
+
+        # Trigger is checked on current candle's extremes (i)
+        curr_h = float(df['High'].iloc[i])
+        curr_l = float(df['Low'].iloc[i])
+        curr_o = float(df['Open'].iloc[i])
+        curr_c = float(df['Close'].iloc[i])
         
         ist_time = df.index[i].tz_convert('Asia/Kolkata')
         is_trade_window = (ist_time.hour == 9 and ist_time.minute >= 20) or (ist_time.hour > 9 and ist_time.hour < 15)
         is_eod = (ist_time.hour == 15 and ist_time.minute >= 15)
         
-        # 🚀 ZERO-LATENCY TRADE FIRE LOGIC
-        score, trend_dir, msg = 0, 0, "✋ WAIT: Setup not aligned."
-        if is_trade_window and not is_eod and adx >= 22:
-            # 🚀 BEARISH SETUP (Price Below VWAP & BankNifty Bearish)
-            if curr_c < baseline_val and bn_bearish:
-                # 🚀 Scalper Trigger Candle: Breaks below previous candle's Low (Momentum Confirmed)
-                if curr_c < df['Low'].iloc[i-1]:
+        score, trend_dir, msg, entry_price = 0, 0, "✋ WAIT: Setup not aligned.", 0.0
+        
+        # 🚀 THE LOCK LATCH (Context locked from closed candle avoids repainting)
+        if is_trade_window and not is_eod and prev_adx >= 22:
+            # BEARISH CONTEXT (Price closed below VWAP previously)
+            if prev_c < prev_baseline and bn_bearish:
+                if curr_l < prev_l: # Trigger: Current tick breaks previous low
                     score, trend_dir = 100, -1
-                    msg = "📉 EXECUTE PE: SMC Aligned + Momentum Fire."
-                else: msg = "⚠️ SMC Aligned (Below VWAP), but waiting for Momentum Candle (PE)."
+                    entry_price = min(prev_l, curr_o) # Entry is exactly at the breakdown point
+                    msg = "📉 EXECUTE PE: Breakdown Locked."
+                else: msg = "⚠️ SMC Aligned (Below VWAP), Waiting for Low Breakdown (PE)."
             
-            # 🚀 BULLISH SETUP (Price Above VWAP & BankNifty Bullish)
-            elif curr_c > baseline_val and bn_bullish:
-                # 🚀 Scalper Trigger Candle: Breaks above previous candle's High (Momentum Confirmed)
-                if curr_c > df['High'].iloc[i-1]:
+            # BULLISH CONTEXT (Price closed above VWAP previously)
+            elif prev_c > prev_baseline and bn_bullish:
+                if curr_h > prev_h: # Trigger: Current tick breaks previous high
                     score, trend_dir = 100, 1
-                    msg = "🚀 EXECUTE CE: SMC Aligned + Momentum Fire."
-                else: msg = "⚠️ SMC Aligned (Above VWAP), but waiting for Momentum Candle (CE)."
+                    entry_price = max(prev_h, curr_o) # Entry is exactly at the breakout point
+                    msg = "🚀 EXECUTE CE: Breakout Locked."
+                else: msg = "⚠️ SMC Aligned (Above VWAP), Waiting for High Breakout (CE)."
         
         if is_eod: msg = "⏱️ EOD: Trading window closed."
         df.at[df.index[i], 'Msg'] = msg
         df.at[df.index[i], 'AI_Score'] = score
         
         if active_trade is not None:
-            # 🚀 Manage active trade
-            trade_closed, status_msg = False, ""
-            if is_eod: status_msg, trade_closed = "⏱️ EOD SQUARE-OFF", True
+            trade_closed, status_msg, exit_price = False, "", 0.0
+            if is_eod: 
+                status_msg, trade_closed, exit_price = "⏱️ EOD SQUARE-OFF", True, curr_c
             elif active_trade['Direction'] == 'LONG':
-                if curr_c >= active_trade['Target']: status_msg, trade_closed = "🎯 TARGET HIT (+PROFIT)", True
-                elif curr_c <= active_trade['StopLoss']: status_msg, trade_closed = "🛑 SL HIT (-LOSS)", True
+                # Exact checking using high/low avoids missing wick targets
+                if curr_h >= active_trade['Target']: status_msg, trade_closed, exit_price = "🎯 TARGET HIT (+PROFIT)", True, active_trade['Target']
+                elif curr_l <= active_trade['StopLoss']: status_msg, trade_closed, exit_price = "🛑 SL HIT (-LOSS)", True, active_trade['StopLoss']
             elif active_trade['Direction'] == 'SHORT':
-                if curr_c <= active_trade['Target']: status_msg, trade_closed = "🎯 TARGET HIT (+PROFIT)", True
-                elif curr_c >= active_trade['StopLoss']: status_msg, trade_closed = "🛑 SL HIT (-LOSS)", True
+                if curr_l <= active_trade['Target']: status_msg, trade_closed, exit_price = "🎯 TARGET HIT (+PROFIT)", True, active_trade['Target']
+                elif curr_h >= active_trade['StopLoss']: status_msg, trade_closed, exit_price = "🛑 SL HIT (-LOSS)", True, active_trade['StopLoss']
             
             if trade_closed:
-                trade_pts = round(curr_c - active_trade['Entry'] if active_trade['Direction']=='LONG' else active_trade['Entry'] - curr_c, 1)
-                trade_data = {"Time (IST)": ist_time.strftime("%d-%b %I:%M %p"), "Asset": "NIFTY 50", "Action": active_trade['Type'], "Spot Entry": active_trade['Entry'], "Spot Exit": curr_c, "Points": trade_pts, "Result": status_msg}
+                trade_pts = round(exit_price - active_trade['Entry'] if active_trade['Direction']=='LONG' else active_trade['Entry'] - exit_price, 1)
+                trade_data = {"Time (IST)": ist_time.strftime("%d-%b %I:%M %p"), "Asset": "NIFTY 50", "Action": active_trade['Type'], "Spot Entry": active_trade['Entry'], "Spot Exit": exit_price, "Points": trade_pts, "Result": status_msg}
                 save_trade(trade_data); active_trade = None 
         else:
-            # 🚀 Open new trade
             if score == 100 and trend_dir != 0 and is_trade_window:
-                atm_strike = int(round(curr_c / 50) * 50)
-                sl_pts = max(18.0, round(atr * 1.5, 1)); tgt_pts = round(sl_pts * 2.0, 1) # Strict 1:2 Risk/Reward based on ATR volatility
+                atm_strike = int(round(entry_price / 50) * 50)
+                sl_pts = max(18.0, round(prev_atr * 1.5, 1)); tgt_pts = round(sl_pts * 2.0, 1)
                 
-                if trend_dir == 1: entry, tgt, sl, direction, t_type = curr_c, curr_c + tgt_pts, curr_c - sl_pts, 'LONG', f'{atm_strike} CE'
-                else: entry, tgt, sl, direction, t_type = curr_c, curr_c - tgt_pts, curr_c + sl_pts, 'SHORT', f'{atm_strike} PE'
+                if trend_dir == 1: tgt, sl, direction, t_type = entry_price + tgt_pts, entry_price - sl_pts, 'LONG', f'{atm_strike} CE'
+                else: tgt, sl, direction, t_type = entry_price - tgt_pts, entry_price + sl_pts, 'SHORT', f'{atm_strike} PE'
                 
-                active_trade = {'Type': t_type, 'Signal': f'🟢 BUY NIFTY {t_type}', 'Entry': round(entry,1), 'Target': round(tgt,1), 'StopLoss': round(sl,1), 'Direction': direction}
+                active_trade = {'Type': t_type, 'Signal': f'🟢 BUY NIFTY {t_type}', 'Entry': round(entry_price,1), 'Target': round(tgt,1), 'StopLoss': round(sl,1), 'Direction': direction}
                 df.at[df.index[i], 'Signal'] = active_trade['Signal']
     return df, active_trade
 
@@ -261,7 +270,7 @@ header_col1, header_col2, header_theme = st.columns([10, 10, 3])
 with header_col1: 
     if st.session_state.shoonya_token: sh_status = f"<span style='color:{primary_color}; font-size:14px;'><i class='fa-solid fa-link'></i> Shoonya API Linked</span>"
     else: sh_status = f"<span style='color:#ff3333; font-size:14px;'>🔴 Shoonya API: {st.session_state.get('shoonya_msg', 'Disabled')}</span>"
-    st.markdown(f"<h1 style='margin:0; font-weight:800; color:{text_color};'>QUANT<span style='color:{primary_color};'>SCALPER AI</span> v18.6 {sh_status}</h1>", unsafe_allow_html=True)
+    st.markdown(f"<h1 style='margin:0; font-weight:800; color:{text_color};'>QUANT<span style='color:{primary_color};'>SCALPER AI</span> v18.7 {sh_status}</h1>", unsafe_allow_html=True)
 with header_col2:
     tz_ist = pytz.timezone('Asia/Kolkata'); now = datetime.datetime.now(tz_ist)
     market_status = "CLOSED" if now.hour >= 16 or now.hour < 9 or (now.hour==15 and now.minute>=30) else "LIVE"
@@ -272,24 +281,20 @@ with header_theme:
 st.markdown("<hr style='border-color:#2d3748; margin: 10px 0 15px 0;'>", unsafe_allow_html=True)
 
 try:
-    # 🚀 Fetch live data
     data = yf.download('^NSEI', period='1d', interval='1m', progress=False)
     bn_data = yf.download('^NSEBANK', period='1d', interval='1m', progress=False)
     daily_data = yf.download('^NSEI', period='5d', interval='1d', progress=False)
     pcr_val = get_nse_pcr() 
     
-    # 🚀 YFINANCE MULTI-INDEX BUG FIX & TZ Fix
     for d in [data, bn_data, daily_data]:
         if not d.empty:
             if isinstance(d.columns, pd.MultiIndex): d.columns = d.columns.get_level_values(0)
             d.index = d.index.tz_convert('Asia/Kolkata') if d.index.tz is not None else d.index.tz_localize('UTC').tz_convert('Asia/Kolkata')
     
     if not data.empty:
-        # 🚀 CALCULATE SMC ENGINE (v18.6)
         df, active_trade = calculate_quant_engine(data, '^NSEI', bn_data, daily_data)
         last = df.iloc[-1]; curr_p = round(float(df['Close'].iloc[-1]), 2); pts = round(curr_p - round(float(df['Open'].iloc[0]), 2), 2)
         
-        # 🚀 Safe UI extracts
         adx = float(last['ADX_14']) if pd.notna(last['ADX_14']) else 0.0; atr = float(last['ATR_14']) if pd.notna(last['ATR_14']) else 0.0
         vwap = float(last['Baseline']) if pd.notna(last['Baseline']) else curr_p;vah = float(last['VAH']) if pd.notna(last['VAH']) else curr_p;val = float(last['VAL']) if pd.notna(last['VAL']) else curr_p
         pdh = float(safe_series(daily_data, 'High').iloc[-2]) if not daily_data.empty and len(daily_data) > 1 else 0.0;pdl = float(safe_series(daily_data, 'Low').iloc[-2]) if not daily_data.empty and len(daily_data) > 1 else 0.0
@@ -298,7 +303,6 @@ try:
         bn_trend = "BULLISH 🟢" if (float(bn_data['Close'].ewm(span=50).mean().iloc[-1]) < float(safe_series(bn_data, 'Close').iloc[-1])) else "BEARISH 🔴"
         eod_color = "#ff3333" if st.session_state.theme == 'dark' else "#c62828";hold_color = "#ffaa00" if st.session_state.theme == 'dark' else "#ef6c00";execute_color = "#00ff66" if st.session_state.theme == 'dark' else "#1b5e20"
 
-        # 🚀 ACTION CENTER (DASHBOARD MESSAGE)
         if active_trade is not None: color_cmd, txt_cmd = hold_color, f"HOLD: {active_trade['Signal']} ACTIVE."
         elif last['AI_Score'] == 100: color_cmd, txt_cmd = execute_color, f"🚀 EXECUTE: {last['Signal']} NOW!"
         elif market_status == "CLOSED": color_cmd, txt_cmd = metric_label, "MARKET CLOSED: AI Standby Mode."
@@ -320,8 +324,8 @@ try:
                 <div style='color:{metric_label}; font-size:11px; text-transform:uppercase;'>Institutional Depth Analytics</div>
                 <div style='margin-top:8px;'><b>Trend Power (ADX):</b> <span style='color:{execute_color};'>{round(adx,1)}</span></div>
                 <div><b>Dynamic Risk (ATR):</b> <span style='color:#00ffff;'>{round(atr,1)} pts</span></div>
-                <div><b>Value Area High (VAH):</b> {vah}</div>
-                <div><b>Value Area Low (VAL):</b> {val}</div>
+                <div><b>Value Area High (VAH):</b> {round(vah,1)}</div>
+                <div><b>Value Area Low (VAL):</b> {round(val,1)}</div>
                 <div><b>Prev Day Low (PDL):</b> {pdl}</div>
             </div>
             """, unsafe_allow_html=True)
@@ -333,7 +337,7 @@ try:
                 <div class='ex-card' style='border: 2px solid {color_trade};'>
                     <div style='display:flex; justify-content:space-between;'>
                         <span class='status-badge' style='background:{bg_color}; border: 1px solid {color_trade}; color:{color_trade};'>{active_trade['Direction']} ACTIVE</span>
-                        <span style='color:#00ffff; font-size: 12px;'><i class="fa-solid fa-shield"></i> ATR Dynamic SL</span>
+                        <span style='color:#00ffff; font-size: 12px;'><i class="fa-solid fa-lock"></i> Anti-Repaint Lock</span>
                     </div>
                     <h2 style='margin:10px 0; color:{text_color};'>SPOT ENTRY: ₹{active_trade['Entry']}</h2>
                     <div style='color:{execute_color}; font-weight:700; font-size:20px;'>TARGET: ₹{active_trade['Target']} (1:2 RR)</div>
@@ -341,7 +345,6 @@ try:
                 </div>
                 """, unsafe_allow_html=True)
 
-        # 🚀 Chart setup
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=df.index, y=df['VAH'], line=dict(width=0), showlegend=False))
         fig.add_trace(go.Scatter(x=df.index, y=df['VAL'], line=dict(width=0), fill='tonexty', fillcolor= f"rgba(0, 255, 255, {'0.05' if st.session_state.theme == 'dark' else '0.1'})", name='Institutional Value Area'))

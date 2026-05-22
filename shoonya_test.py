@@ -1,783 +1,179 @@
-import datetime as dt
-import json
-import os
-import time
-from pathlib import Path
-
-import numpy as np
-import pandas as pd
-import plotly.graph_objects as go
-import pytz
-import requests
 import streamlit as st
 import yfinance as yf
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+import time
+import datetime
+import pytz
+import requests
+import json
+import concurrent.futures
 
+# ==============================================================================
+# 1. 🔑 SHOONYA API CREDENTIALS 
+# ==============================================================================
+SHOONYA_UID = "FN209492" 
+SHOONYA_PWD = "Rahul@1995" 
+SHOONYA_API_KEY = "3007acd3cd50a75e4e8eb1bfc0e1459a" 
+SHOONYA_VC = "FN209492_U" 
+SHOONYA_TOTP_SECRET = "666J4TSFQRM624X75B6WZ32PMUH3477P" 
 
-APP_NAME = "QuantScalper AI Pro"
-APP_VERSION = "v21.0 (Commodity Edition)"
-IST = pytz.timezone("Asia/Kolkata")
-DATA_DIR = Path("data")
-TRADE_BOOK = DATA_DIR / "trade_book.csv"
-SIGNAL_BOOK = DATA_DIR / "signal_book.csv"
-SETTINGS_FILE = DATA_DIR / "settings.json"
+# ==============================================================================
+# 2. SHOONYA LIVE LOGIN ENGINE
+# ==============================================================================
+try:
+    import pyotp
+    import hashlib
+    SH_AVAILABLE = True
+except ImportError:
+    SH_AVAILABLE = False
 
-# Added Asset Definitions for Index and Commodities
-ASSETS = {
-    "NIFTY": {"ticker": "^NSEI", "align": "^NSEBANK", "type": "INDEX", "open": "09:15", "close": "15:30", "step": 50},
-    "CRUDE OIL": {"ticker": "CL=F", "align": "BZ=F", "type": "COMMODITY", "open": "09:00", "close": "23:30", "step": 1},
-    "GOLD": {"ticker": "GC=F", "align": "SI=F", "type": "COMMODITY", "open": "09:00", "close": "23:30", "step": 10},
-    "NATURAL GAS": {"ticker": "NG=F", "align": "CL=F", "type": "COMMODITY", "open": "09:00", "close": "23:30", "step": 0.1},
-}
-
-BASE_SETTINGS = {
-    "active_asset": "NIFTY",
-    "min_confidence": 82,
-    "min_adx": 24,
-    "volume_multiplier": 1.20,
-    "max_vwap_distance_atr": 1.20,
-    "breakout_atr_buffer": 0.25,
-    "min_sl_points": 18.0,
-    "atr_sl_multiplier": 1.50,
-    "rr_multiplier": 2.00,
-    "cooldown_after_loss_min": 20,
-    "max_trades_per_day": 4,
-    "first_trade_after": "09:45",
-    "last_trade_before": "23:15", # Updated for commodity night sessions
-}
-
-TRADE_COLUMNS = [
-    "id", "date", "time", "asset", "side", "strike", "entry", "target",
-    "stoploss", "exit", "points", "result", "confidence", "reason", "mistake_tag",
-]
-
-SIGNAL_COLUMNS = [
-    "id", "date", "time", "asset", "side", "strike", "entry", "target",
-    "stoploss", "confidence", "status", "reason", "blocked_by",
-]
-
-
-st.set_page_config(
-    page_title=f"{APP_NAME}",
-    layout="wide",
-    initial_sidebar_state="collapsed",
-)
-
-
-def ensure_files():
-    DATA_DIR.mkdir(exist_ok=True)
-    if not TRADE_BOOK.exists():
-        pd.DataFrame(columns=TRADE_COLUMNS).to_csv(TRADE_BOOK, index=False)
-    if not SIGNAL_BOOK.exists():
-        pd.DataFrame(columns=SIGNAL_COLUMNS).to_csv(SIGNAL_BOOK, index=False)
-    if not SETTINGS_FILE.exists():
-        SETTINGS_FILE.write_text(json.dumps(BASE_SETTINGS, indent=2), encoding="utf-8")
-
-
-def load_settings():
-    ensure_files()
+def shoonya_login():
+    if not SH_AVAILABLE: return None, "pyotp missing"
+    if not SHOONYA_API_KEY or SHOONYA_API_KEY == "YOUR_API_KEY": return None, "No API Key"
     try:
-        saved = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-        return {**BASE_SETTINGS, **saved}
-    except Exception:
-        return BASE_SETTINGS.copy()
-
-
-def save_settings(settings):
-    ensure_files()
-    SETTINGS_FILE.write_text(json.dumps(settings, indent=2), encoding="utf-8")
-
-
-def read_csv(path, columns):
-    ensure_files()
-    try:
-        df = pd.read_csv(path)
-        for col in columns:
-            if col not in df.columns:
-                df[col] = np.nan
-        return df[columns]
-    except Exception:
-        return pd.DataFrame(columns=columns)
-
-
-def append_row(path, columns, row):
-    df = read_csv(path, columns)
-    row = {col: row.get(col, "") for col in columns}
-    df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
-    df.to_csv(path, index=False)
-
-
-def now_ist():
-    return dt.datetime.now(IST)
-
-
-def parse_hhmm(value):
-    hour, minute = value.split(":")
-    return int(hour), int(minute)
-
-
-def in_time_window(ts, settings):
-    start_h, start_m = parse_hhmm(settings["first_trade_after"])
-    end_h, end_m = parse_hhmm(settings["last_trade_before"])
-    start = ts.replace(hour=start_h, minute=start_m, second=0, microsecond=0)
-    end = ts.replace(hour=end_h, minute=end_m, second=0, microsecond=0)
-    return start <= ts <= end
-
-
-def market_status(ts, asset_info):
-    open_h, open_m = parse_hhmm(asset_info["open"])
-    close_h, close_m = parse_hhmm(asset_info["close"])
-    open_time = ts.replace(hour=open_h, minute=open_m, second=0, microsecond=0)
-    close_time = ts.replace(hour=close_h, minute=close_m, second=0, microsecond=0)
-    
-    if asset_info["type"] == "INDEX" and ts.weekday() >= 5:
-        return "CLOSED"
-    elif asset_info["type"] == "COMMODITY" and ts.weekday() >= 5: # Global commodities close on weekends
-        return "CLOSED"
-        
-    return "LIVE" if open_time <= ts <= close_time else "CLOSED"
-
-
-@st.cache_data(ttl=20)
-def fetch_intraday(symbol):
-    df = yf.download(symbol, period="1d", interval="1m", progress=False, auto_adjust=False)
-    return normalize_yf(df)
-
-
-@st.cache_data(ttl=1800)
-def fetch_daily(symbol):
-    df = yf.download(symbol, period="7d", interval="1d", progress=False, auto_adjust=False)
-    return normalize_yf(df)
-
-
-@st.cache_data(ttl=60)
-def fetch_pcr(asset_type):
-    if asset_type != "INDEX":
-        return None  # PCR is not easily fetched for commodities from NSE
-    try:
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json",
-            "Referer": "https://www.nseindia.com/option-chain",
-        }
-        session = requests.Session()
-        session.get("https://www.nseindia.com", headers=headers, timeout=5)
-        res = session.get(
-            "https://www.nseindia.com/api/option-chain-indices?symbol=NIFTY",
-            headers=headers,
-            timeout=5,
-        )
+        pwd_sha256 = hashlib.sha256(SHOONYA_PWD.encode('utf-8')).hexdigest()
+        app_key_sha256 = hashlib.sha256(f"{SHOONYA_UID}|{SHOONYA_API_KEY}".encode('utf-8')).hexdigest()
+        totp = pyotp.TOTP(SHOONYA_TOTP_SECRET).now()
+        payload = {"apkversion": "1.0.0", "uid": SHOONYA_UID, "pwd": pwd_sha256, "factor2": totp, "vc": SHOONYA_VC, "appkey": app_key_sha256, "imei": "abc12345", "source": "API"}
+        res = requests.post('https://api.shoonya.com/NorenWClientTP/QuickAuth', data='jData=' + json.dumps(payload))
         data = res.json()
-        ce = data["filtered"]["CE"]["totOI"]
-        pe = data["filtered"]["PE"]["totOI"]
-        return round(pe / ce, 2) if ce else None
-    except Exception:
+        if data.get('stat') == 'Ok': return data.get('susertoken'), "Success"
+        else: return None, data.get('emsg', 'Unknown Error')
+    except Exception as e: return None, str(e)
+
+def get_shoonya_ltp(token, susertoken):
+    if not susertoken: return None
+    try:
+        payload = {"uid": SHOONYA_UID, "exch": "NSE", "token": str(token)}
+        headers = {'Authorization': f'Bearer {SHOONYA_UID} {susertoken}'}
+        res = requests.post('https://api.shoonya.com/NorenWClientTP/GetQuotes', data='jData=' + json.dumps(payload), headers=headers)
+        if res.json().get('stat') == 'Ok': return float(res.json().get('lp'))
         return None
+    except: return None
 
+# ==============================================================================
+# 3. PAGE CONFIG & PERSISTENT STATE (CRASH-PROOF)
+# ==============================================================================
+st.set_page_config(page_title="QuantScalper AI v22.0", layout="wide", initial_sidebar_state="collapsed")
 
-def normalize_yf(df):
-    if df is None or df.empty:
-        return pd.DataFrame()
-    df = df.copy()
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-    if df.index.tz is None:
-        df.index = df.index.tz_localize("UTC").tz_convert(IST)
-    else:
-        df.index = df.index.tz_convert(IST)
-    return df
+# यह डेटा रिफ्रेश होने पर कभी डिलीट नहीं होगा
+if 'trade_active' not in st.session_state: st.session_state.trade_active = False
+if 'trade_details' not in st.session_state: st.session_state.trade_details = {}
+if 'shoonya_token' not in st.session_state:
+    token, msg = shoonya_login()
+    st.session_state.shoonya_token = token
+    st.session_state.shoonya_msg = msg
 
+st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+    html, body, [class*="css"]  { font-family: 'Inter', sans-serif; background-color: #0b0e11; color: #e3e9f0; }
+    .stApp { background-color: #0b0e11; }
+    div[data-testid="stMetricValue"] > div { color: #deff9a !important; font-size: 26px !important; }
+    div[data-testid="stMetricLabel"] > label { color: #8b949e !important; font-size: 13px !important; font-weight: 700 !important; }
+    .ex-card { background: #14181f; border-radius: 12px; padding: 20px; border: 1px solid #2d3748; margin-bottom: 15px; }
+    .status-badge { padding: 4px 10px; border-radius: 6px; font-weight: 800; font-size: 12px; text-transform: uppercase; }
+    </style>
+    """, unsafe_allow_html=True)
 
-def safe_series(df, col):
-    value = df[col]
-    if isinstance(value, pd.DataFrame):
-        return value.iloc[:, 0]
-    return value
+# ==============================================================================
+# 4. HEADER & SEMI-AUTO BUTTONS
+# ==============================================================================
+sh_status = "<span style='color:#00ff66;'>🟢 API Linked</span>" if st.session_state.shoonya_token else "<span style='color:#ff3333;'>🔴 API Disabled</span>"
+st.markdown(f"<h1 style='margin:0; font-weight:800;'>QUANT<span style='color:#deff9a;'>SCALPER AI</span> v22.0 <span style='font-size:14px;'>{sh_status}</span></h1>", unsafe_allow_html=True)
+st.markdown("<hr style='border-color:#2d3748; margin: 10px 0 15px 0;'>", unsafe_allow_html=True)
 
+c1, c2, c3 = st.columns([1, 1, 3])
+with c1:
+    if st.button("🟢 EXECUTE CE BUY", use_container_width=True):
+        st.session_state.trade_active = True
+        st.session_state.trade_details = {'Type': 'CE', 'Entry': 'Market', 'Status': 'Active'}
+with c2:
+    if st.button("🔴 EXECUTE PE BUY", use_container_width=True):
+        st.session_state.trade_active = True
+        st.session_state.trade_details = {'Type': 'PE', 'Entry': 'Market', 'Status': 'Active'}
 
-def add_indicators(df):
-    df = df.copy()
-    high = safe_series(df, "High")
-    low = safe_series(df, "Low")
-    close = safe_series(df, "Close")
-    volume = safe_series(df, "Volume") if "Volume" in df.columns else pd.Series(0, index=df.index)
-
-    tp = (high + low + close) / 3
-    if volume.sum() > 0:
-        cum_vol = volume.cumsum() + 1e-10
-        df["VWAP"] = (tp * volume).cumsum() / cum_vol
-        df["VWAP_VAR"] = (((close - df["VWAP"]) ** 2) * volume).cumsum() / cum_vol
-        df["VWAP_STD"] = np.sqrt(df["VWAP_VAR"])
-        df["VAH"] = df["VWAP"] + df["VWAP_STD"]
-        df["VAL"] = df["VWAP"] - df["VWAP_STD"]
-        df["VOL_MA20"] = volume.rolling(20).mean()
-    else:
-        df["VWAP"] = close.ewm(span=50, adjust=False).mean()
-        df["VAH"] = df["VWAP"] * 1.001
-        df["VAL"] = df["VWAP"] * 0.999
-        df["VOL_MA20"] = 0
-
-    plus_dm = high.diff()
-    minus_dm = low.diff()
-    plus_dm[plus_dm < 0] = 0
-    minus_dm[minus_dm > 0] = 0
-
-    tr = pd.concat(
-        [high - low, (high - close.shift(1)).abs(), (low - close.shift(1)).abs()],
-        axis=1,
-    ).max(axis=1)
-    atr = tr.rolling(14).mean()
-    df["ATR"] = atr
-    df["+DI"] = 100 * plus_dm.rolling(14).mean() / (atr + 1e-10)
-    df["-DI"] = 100 * abs(minus_dm).rolling(14).mean() / (atr + 1e-10)
-    df["ADX"] = (abs(df["+DI"] - df["-DI"]) / (df["+DI"] + df["-DI"] + 1e-10) * 100).rolling(14).mean()
-    df["EMA20"] = close.ewm(span=20, adjust=False).mean()
-    df["EMA50"] = close.ewm(span=50, adjust=False).mean()
-    df["RANGE20_HIGH"] = high.rolling(20).max().shift(1)
-    df["RANGE20_LOW"] = low.rolling(20).min().shift(1)
-    return df
-
-
-def previous_day_levels(daily):
-    if daily.empty or len(daily) < 2:
-        return 0.0, 0.0
-    return float(daily["High"].iloc[-2]), float(daily["Low"].iloc[-2])
-
-
-def pcr_bias(pcr):
-    if pcr is None:
-        return "UNKNOWN"
-    if pcr >= 1.20:
-        return "BULLISH"
-    if pcr <= 0.80:
-        return "BEARISH"
-    return "NEUTRAL"
-
-
-def alignment_bias(align_df):
-    if align_df.empty or len(align_df) < 60:
-        return "UNKNOWN"
-    align_df = add_indicators(align_df)
-    close = safe_series(align_df, "Close")
-    last = align_df.iloc[-1]
-    if close.iloc[-1] > last["VWAP"] and close.iloc[-1] > last["EMA50"] and close.iloc[-1] > close.iloc[-2]:
-        return "BULLISH"
-    if close.iloc[-1] < last["VWAP"] and close.iloc[-1] < last["EMA50"] and close.iloc[-1] < close.iloc[-2]:
-        return "BEARISH"
-    return "NEUTRAL"
-
-
-def trade_stats():
-    book = read_csv(TRADE_BOOK, TRADE_COLUMNS)
-    if book.empty:
-        return {
-            "today_count": 0,
-            "loss_streak": 0,
-            "win_rate": 0,
-            "net_points": 0,
-            "last_result": "",
-        }
-    today = now_ist().strftime("%Y-%m-%d")
-    today_book = book[book["date"].astype(str) == today]
-    results = book["result"].dropna().astype(str).tolist()
-    loss_streak = 0
-    for result in reversed(results):
-        if "LOSS" in result or "SL" in result:
-            loss_streak += 1
-        elif "TARGET" in result or "PROFIT" in result:
-            break
-    wins = book["result"].astype(str).str.contains("TARGET|PROFIT", regex=True).sum()
-    closed = book["result"].astype(str).str.contains("TARGET|PROFIT|SL|LOSS|EXIT", regex=True).sum()
-    points = pd.to_numeric(book["points"], errors="coerce").fillna(0).sum()
-    return {
-        "today_count": len(today_book),
-        "loss_streak": loss_streak,
-        "win_rate": round((wins / closed * 100), 1) if closed else 0,
-        "net_points": round(points, 2),
-        "last_result": results[-1] if results else "",
-    }
-
-
-def adaptive_settings(settings, stats):
-    adjusted = settings.copy()
-    warnings = []
-    if stats["loss_streak"] >= 2:
-        adjusted["min_confidence"] = max(adjusted["min_confidence"], 90)
-        adjusted["min_adx"] = max(adjusted["min_adx"], 28)
-        adjusted["volume_multiplier"] = max(adjusted["volume_multiplier"], 1.35)
-        warnings.append("Loss streak guard active: only elite setups allowed.")
-    if stats["today_count"] >= settings["max_trades_per_day"]:
-        warnings.append("Daily trade limit reached.")
-    return adjusted, warnings
-
-
-def build_signal(main_df, align_df, daily, pcr, settings, asset_name, asset_info):
-    stats = trade_stats()
-    active_settings, guard_warnings = adaptive_settings(settings, stats)
-
-    if main_df.empty or len(main_df) < 80:
-        return None, {"status": "BLOCKED", "reason": f"Not enough data for {asset_name}.", "checks": []}
-
-    df = add_indicators(main_df)
-    last = df.iloc[-1]
-    prev = df.iloc[-2]
-    ts = df.index[-1].to_pydatetime()
-    curr = float(last["Close"])
-    atr = float(last["ATR"]) if pd.notna(last["ATR"]) else 0
-    adx = float(last["ADX"]) if pd.notna(last["ADX"]) else 0
-    vwap = float(last["VWAP"])
-    pdh, pdl = previous_day_levels(daily)
-    align_status = alignment_bias(align_df)
-    pcr_state = pcr_bias(pcr)
-
-    adx_ref = float(df["ADX"].iloc[-6]) if pd.notna(df["ADX"].iloc[-6]) else 0
-    adx_rising = adx > adx_ref
-    volume = float(last["Volume"]) if "Volume" in df.columns else 0
-    vol_ma = float(last["VOL_MA20"]) if pd.notna(last["VOL_MA20"]) else 0
-    vol_ok = volume > vol_ma * active_settings["volume_multiplier"] if vol_ma > 0 else True
-    vwap_distance_ok = abs(curr - vwap) <= atr * active_settings["max_vwap_distance_atr"] if atr > 0 else False
-    chop_zone = abs(curr - vwap) < max(atr * 0.15, 3) if atr > 0 else True
-    time_ok = in_time_window(ts, active_settings)
-    market_ok = market_status(now_ist(), asset_info) == "LIVE"
-    daily_limit_ok = stats["today_count"] < settings["max_trades_per_day"]
-
-    bullish_break = (
-        curr > float(prev["High"])
-        and curr > float(last["RANGE20_HIGH"])
-        and (curr - float(prev["High"])) > atr * active_settings["breakout_atr_buffer"]
-    )
-    bearish_break = (
-        curr < float(prev["Low"])
-        and curr < float(last["RANGE20_LOW"])
-        and (float(prev["Low"]) - curr) > atr * active_settings["breakout_atr_buffer"]
-    )
-
-    long_context = curr > vwap and curr > float(last["EMA50"]) and align_status == "BULLISH"
-    short_context = curr < vwap and curr < float(last["EMA50"]) and align_status == "BEARISH"
-
-    checks = [
-        ("Market live", market_ok),
-        ("Trading window", time_ok),
-        ("Daily trade limit", daily_limit_ok),
-        ("ADX strong", adx >= active_settings["min_adx"]),
-        ("ADX rising", adx_rising),
-        ("Volume confirmed", vol_ok),
-        ("Not overextended", vwap_distance_ok),
-        ("Not in VWAP chop", not chop_zone),
-        ("Alignment Check", align_status in ["BULLISH", "BEARISH"]),
-    ]
-
-    blocked_by = [name for name, ok in checks if not ok]
-    side = "NO TRADE"
-    
-    # Adapt naming based on Index (CE/PE) vs Commodity (LONG/SHORT)
-    buy_tag = "CE" if asset_info["type"] == "INDEX" else "LONG"
-    sell_tag = "PE" if asset_info["type"] == "INDEX" else "SHORT"
-
-    if long_context and bullish_break:
-        side = buy_tag
-    elif short_context and bearish_break:
-        side = sell_tag
-    else:
-        blocked_by.append(f"No confirmed {buy_tag}/{sell_tag} breakout")
-
-    confluence = sum(1 for _, ok in checks if ok)
-    confidence = min(99, int((confluence / len(checks)) * 78))
-    if side != "NO TRADE":
-        confidence += 12
-    if pcr_state == "BULLISH" and side == buy_tag:
-        confidence += 5
-    if pcr_state == "BEARISH" and side == sell_tag:
-        confidence += 5
-    if (curr > pdh and side == buy_tag) or (curr < pdl and side == sell_tag):
-        confidence += 4
-    confidence = min(confidence, 99)
-
-    if confidence < active_settings["min_confidence"]:
-        blocked_by.append(f"Confidence below {active_settings['min_confidence']}%")
-
-    status = "READY" if side != "NO TRADE" and not blocked_by else "BLOCKED"
-    
-    # Strike calculation only relevant for Index options, FUT for commodity
-    strike = int(round(curr / asset_info["step"]) * asset_info["step"]) if asset_info["type"] == "INDEX" else "FUT"
-    risk = max(active_settings["min_sl_points"], atr * active_settings["atr_sl_multiplier"])
-
-    if side == buy_tag:
-        entry = max(curr, float(prev["High"]))
-        stoploss = min(entry - risk, float(last["Low"]))
-        target = entry + (entry - stoploss) * active_settings["rr_multiplier"]
-        reason = f"{side} only after close above prior high, range high, VWAP and alignment."
-    elif side == sell_tag:
-        entry = min(curr, float(prev["Low"]))
-        stoploss = max(entry + risk, float(last["High"]))
-        target = entry - (stoploss - entry) * active_settings["rr_multiplier"]
-        reason = f"{side} only after close below prior low, range low, VWAP and alignment."
-    else:
-        entry = curr
-        stoploss = 0
-        target = 0
-        reason = "No high-probability setup."
-
-    signal = {
-        "id": ts.strftime("%Y%m%d%H%M"),
-        "date": ts.strftime("%Y-%m-%d"),
-        "time": ts.strftime("%H:%M"),
-        "asset": asset_name,
-        "side": side,
-        "strike": strike,
-        "entry": round(entry, 2),
-        "target": round(target, 2),
-        "stoploss": round(stoploss, 2),
-        "confidence": confidence,
-        "status": status,
-        "reason": reason,
-        "blocked_by": ", ".join(dict.fromkeys(blocked_by)),
-        "price": round(curr, 2),
-        "vwap": round(vwap, 2),
-        "adx": round(adx, 2),
-        "atr": round(atr, 2),
-        "pdh": round(pdh, 2),
-        "pdl": round(pdl, 2),
-        "align_status": align_status,
-        "pcr": pcr,
-        "pcr_state": pcr_state,
-        "guard_warnings": guard_warnings,
-    }
-
-    return signal, {"status": status, "reason": reason, "checks": checks, "df": df}
-
-
-def save_signal_once(signal):
-    book = read_csv(SIGNAL_BOOK, SIGNAL_COLUMNS)
-    if signal["id"] not in book["id"].astype(str).tolist():
-        append_row(SIGNAL_BOOK, SIGNAL_COLUMNS, signal)
-
-
-def record_trade(signal, result, exit_price, mistake_tag=""):
-    entry = float(signal["entry"])
-    side = signal["side"]
-    
-    # Calculate points based on LONG/CE vs SHORT/PE
-    if side in ["CE", "LONG"]:
-        points = exit_price - entry
-    else:
-        points = entry - exit_price
-        
-    row = {
-        "id": f'{signal["id"]}-{result}',
-        "date": now_ist().strftime("%Y-%m-%d"),
-        "time": now_ist().strftime("%H:%M:%S"),
-        "asset": signal["asset"],
-        "side": side,
-        "strike": signal["strike"],
-        "entry": entry,
-        "target": signal["target"],
-        "stoploss": signal["stoploss"],
-        "exit": round(exit_price, 2),
-        "points": round(points, 2),
-        "result": result,
-        "confidence": signal["confidence"],
-        "reason": signal["reason"],
-        "mistake_tag": mistake_tag,
-    }
-    append_row(TRADE_BOOK, TRADE_COLUMNS, row)
-
-
-def css():
-    st.markdown(
-        """
-        <style>
-        .block-container {padding-top: 1.3rem; padding-left: 1.5rem; padding-right: 1.5rem; max-width: 100%;}
-        header, footer, #MainMenu {visibility: hidden;}
-        .stApp {background: #080b0f; color: #e6edf3;}
-        .topbar {display:flex; justify-content:space-between; align-items:center; border:1px solid #263241; border-radius:12px; padding:16px 18px; background:#10151d; margin-bottom: 15px;}
-        .brand {font-size:28px; font-weight:900; color:#e6edf3;}
-        .accent {color:#deff9a;}
-        .subtle {color:#8b949e; font-size:12px; font-weight:700;}
-        .pill {display:inline-block; padding:5px 10px; border-radius:999px; border:1px solid #263241; font-size:12px; font-weight:900;}
-        .card {background:#10151d; border:1px solid #263241; border-radius:12px; padding:16px; min-height:104px;}
-        .label {font-size:11px; color:#8b949e; text-transform:uppercase; font-weight:900;}
-        .value {font-size:24px; color:#deff9a; font-weight:900; margin-top:5px;}
-        .small {font-size:12px; color:#8b949e; font-weight:700;}
-        .command {border-radius:12px; padding:18px; border:1px solid #263241; background:#10151d; margin:14px 0;}
-        .command-ready {border-left:6px solid #00ff66;}
-        .command-blocked {border-left:6px solid #ff4d4d;}
-        .command-title {font-size:12px; color:#8b949e; font-weight:900; text-transform:uppercase;}
-        .command-main {font-size:26px; color:#e6edf3; font-weight:900; margin-top:6px;}
-        .ok {color:#00ff66; font-weight:900;}
-        .bad {color:#ff4d4d; font-weight:900;}
-        .warn {color:#ffaa00; font-weight:900;}
-        div[data-testid="stDataFrame"] {border:1px solid #263241; border-radius:10px;}
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def render_header(status, active_asset):
-    ts = now_ist()
-    color = "#00ff66" if status == "LIVE" else "#ff4d4d"
-    st.markdown(
-        f"""
-        <div class="topbar">
-            <div>
-                <div class="brand">QUANT<span class="accent">SCALPER AI</span> PRO <span class="subtle">{APP_VERSION}</span></div>
-                <div class="subtle">Multi-Asset Execution Terminal | Options & Commodities Futures</div>
-            </div>
-            <div style="text-align:right">
-                <span class="pill" style="color:{color};">{active_asset} {status}</span>
-                <div class="subtle" style="margin-top:8px;">{ts.strftime("%d %b %Y | %I:%M:%S %p IST")}</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def render_card(label, value, sub="", color="#deff9a"):
-    st.markdown(
-        f"""
-        <div class="card">
-            <div class="label">{label}</div>
-            <div class="value" style="color:{color};">{value}</div>
-            <div class="small">{sub}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def render_chart(df, signal, asset_name):
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df.index, y=df["VAH"], line=dict(width=0), showlegend=False))
-    fig.add_trace(
-        go.Scatter(
-            x=df.index,
-            y=df["VAL"],
-            line=dict(width=0),
-            fill="tonexty",
-            fillcolor="rgba(0,255,255,0.06)",
-            name="Value Area",
-        )
-    )
-    fig.add_trace(go.Scatter(x=df.index, y=df["Close"], name=asset_name, line=dict(color="#deff9a", width=2.4)))
-    fig.add_trace(go.Scatter(x=df.index, y=df["VWAP"], name="VWAP", line=dict(color="#00ffff", width=1.5, dash="dash")))
-    fig.add_hline(y=signal["price"], line_color="#ffffff", line_width=1, annotation_text="LTP")
-    if signal["status"] == "READY":
-        fig.add_hline(y=signal["entry"], line_color="#00ffff", line_dash="dash", annotation_text="ENTRY")
-        fig.add_hline(y=signal["target"], line_color="#00ff66", line_dash="dot", annotation_text="TARGET")
-        fig.add_hline(y=signal["stoploss"], line_color="#ff4d4d", line_dash="dot", annotation_text="SL")
-    if signal["pdh"] > 0:
-        fig.add_hline(y=signal["pdh"], line_color="#ffaa00", line_dash="dot", annotation_text="PDH")
-    if signal["pdl"] > 0:
-        fig.add_hline(y=signal["pdl"], line_color="#ffaa00", line_dash="dot", annotation_text="PDL")
-    fig.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="#080b0f",
-        plot_bgcolor="#080b0f",
-        height=430,
-        margin=dict(l=8, r=8, t=12, b=8),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        xaxis=dict(showgrid=False),
-        yaxis=dict(gridcolor="#263241"),
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-
-def render_settings(settings):
-    with st.expander("⚙️ Risk Engine Settings & Asset Selection", expanded=False):
-        c_ast, c1, c2, c3 = st.columns(4)
-        settings["active_asset"] = c_ast.selectbox("Select Asset to Trade", list(ASSETS.keys()), index=list(ASSETS.keys()).index(settings.get("active_asset", "NIFTY")))
-        settings["min_confidence"] = c1.slider("Minimum confidence", 70, 95, int(settings["min_confidence"]))
-        settings["min_adx"] = c2.slider("Minimum ADX", 18, 35, int(settings["min_adx"]))
-        settings["volume_multiplier"] = c3.slider("Volume multiplier", 1.0, 2.0, float(settings["volume_multiplier"]), 0.05)
-        
-        c4, c5, c6, c7, c8 = st.columns(5)
-        settings["max_trades_per_day"] = c4.slider("Max trades per day", 1, 8, int(settings["max_trades_per_day"]))
-        settings["rr_multiplier"] = c5.slider("Reward risk", 1.0, 3.0, float(settings["rr_multiplier"]), 0.25)
-        settings["atr_sl_multiplier"] = c6.slider("ATR SL multiplier", 1.0, 2.5, float(settings["atr_sl_multiplier"]), 0.1)
-        settings["first_trade_after"] = c7.text_input("First trade after", settings["first_trade_after"])
-        settings["last_trade_before"] = c8.text_input("Last trade before", settings["last_trade_before"])
-        
-        if st.button("Save & Apply Settings"):
-            save_settings(settings)
-            st.success("Settings saved successfully. Page will reload.")
-            time.sleep(1)
+if st.session_state.trade_active:
+    with c3:
+        st.warning(f"🔥 ACTIVE TRADE RUNNING: {st.session_state.trade_details['Type']} | Managing Risk...")
+        if st.button("⏹️ CLOSE TRADE & SQUARE-OFF"):
+            st.session_state.trade_active = False
+            st.session_state.trade_details = {}
             st.rerun()
 
-
-def render_manual_trade_panel(signal):
-    st.subheader("Manual Execution Plan")
-    if signal["status"] != "READY":
-        st.error("Trade blocked. Do not take manual trade.")
-        st.caption(signal["blocked_by"])
-        return
-
-    side = signal["side"]
-    asset = signal["asset"]
-    
-    if signal["strike"] == "FUT":
-        instrument_name = f"{asset} FUTURES {side}"
-    else:
-        instrument_name = f'{asset} {signal["strike"]} {side}'
-        
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Instrument", instrument_name)
-    c2.metric("Spot Entry", signal["entry"])
-    c3.metric("Spot Target", signal["target"])
-    c4.metric("Spot SL", signal["stoploss"])
-
-    st.warning("Take this trade manually in your broker terminal ONLY if the live price still matches this setup.")
-    confirm = st.checkbox("I checked broker app price, spread, quantity and risk before entering.")
-    if confirm:
-        save_signal_once(signal)
-        st.success("Signal saved. After exit, record result below.")
-
-    with st.form("record_result"):
-        exit_price = st.number_input("Spot exit price", value=float(signal["target"]), step=0.1)
-        result = st.selectbox("Result", ["TARGET HIT (+PROFIT)", "SL HIT (-LOSS)", "MANUAL EXIT", "SKIPPED"])
-        mistake = st.selectbox(
-            "Mistake tag",
-            ["None", "Late entry", "Chasing", "Ignored spread", "News spike", "Against trend", "Manual override"],
-        )
-        submitted = st.form_submit_button("Save Trade Result")
-        if submitted:
-            record_trade(signal, result, float(exit_price), mistake)
-            st.success("Trade saved in journal.")
-
-
-def style_result(val):
-    text = str(val)
-    if "TARGET" in text or "PROFIT" in text:
-        return "color:#00ff66; font-weight:900;"
-    if "SL" in text or "LOSS" in text:
-        return "color:#ff4d4d; font-weight:900;"
-    return "color:#ffaa00; font-weight:900;"
-
-
-def main():
-    ensure_files()
-    css()
-    settings = load_settings()
-    
-    active_asset = settings.get("active_asset", "NIFTY")
-    asset_info = ASSETS[active_asset]
-    status = market_status(now_ist(), asset_info)
-    
-    render_header(status, active_asset)
-    render_settings(settings)
-
+# ==============================================================================
+# 5. ROBUST DATA ENGINE (BULLETPROOF)
+# ==============================================================================
+@st.cache_data(ttl=45)
+def fetch_live_market_data():
     try:
-        main_df = fetch_intraday(asset_info["ticker"])
-        align_df = fetch_intraday(asset_info["align"])
-        daily = fetch_daily(asset_info["ticker"])
-        pcr = fetch_pcr(asset_info["type"])
-    except Exception as exc:
-        st.error(f"Data fetch error for {active_asset}: {exc}")
-        time.sleep(8)
-        st.rerun()
+        # Retry logic for YFinance stability
+        for attempt in range(3):
+            df = yf.download('^NSEI', period='1d', interval='1m', progress=False)
+            if df is not None and not df.empty and len(df) > 5:
+                if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+                return df
+            time.sleep(1)
+        return None
+    except: return None
 
-    signal, context = build_signal(main_df, align_df, daily, pcr, settings, active_asset, asset_info)
+with st.spinner('Syncing Institutional Data & Calculating SMC...'):
+    df = fetch_live_market_data()
     
-    if signal is None:
-        st.error(context["reason"])
-        time.sleep(8)
-        st.rerun()
-
-    command_class = "command-ready" if signal["status"] == "READY" else "command-blocked"
-    
-    if signal["status"] == "READY":
-        if asset_info["type"] == "INDEX":
-            command = f'BUY {active_asset} {signal["strike"]} {signal["side"]} | Confidence {signal["confidence"]}%'
-        else:
-            command = f'ENTER {signal["side"]} {active_asset} FUTURES | Confidence {signal["confidence"]}%'
-    else:
-        command = f'NO TRADE | {signal["blocked_by"]}'
-
-    st.markdown(
-        f"""
-        <div class="command {command_class}">
-            <div class="command-title">AI Trade Command [{active_asset}]</div>
-            <div class="command-main">{command}</div>
-            <div class="small">{signal["reason"]}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    if signal["guard_warnings"]:
-        for warning in signal["guard_warnings"]:
-            st.warning(warning)
-
-    stats = trade_stats()
-    c1, c2, c3, c4, c5 = st.columns(5)
-    render_card(f"{active_asset} LTP", f'{signal["price"]}', f'VWAP {signal["vwap"]}')
-    
-    with c2:
-        color = "#00ff66" if signal["align_status"] == "BULLISH" else "#ff4d4d" if signal["align_status"] == "BEARISH" else "#ffaa00"
-        align_label = "BankNifty" if asset_info["type"] == "INDEX" else "Global Correlation"
-        render_card(align_label, signal["align_status"], "Alignment filter", color)
+    if df is not None:
+        # SMC Engine Math
+        curr_p = round(float(df['Close'].iloc[-1]), 2)
+        df['VWAP'] = (df['Close'] * df['Volume']).cumsum() / (df['Volume'].cumsum() + 1e-10)
+        vwap_val = round(float(df['VWAP'].iloc[-1]), 2)
         
-    with c3:
-        render_card("ADX / ATR", f'{signal["adx"]} / {signal["atr"]}', "Trend and risk")
-        
-    with c4:
-        if asset_info["type"] == "INDEX":
-            render_card("PCR", signal["pcr"] if signal["pcr"] else "Error", signal["pcr_state"])
-        else:
-            render_card("PCR", "N/A", "Not applicable for Commodity", "#8b949e")
+        # Live LTP Override
+        if st.session_state.shoonya_token:
+            ltp = get_shoonya_ltp('26000', st.session_state.shoonya_token)
+            if ltp: curr_p = ltp
             
-    with c5:
-        color = "#00ff66" if stats["net_points"] >= 0 else "#ff4d4d"
-        render_card("Journal P/L", f'{stats["net_points"]} pts', f'Win rate {stats["win_rate"]}%', color)
+        m1, m2, m3 = st.columns(3)
+        with m1: st.metric("NIFTY SPOT", f"₹{curr_p}")
+        with m2: st.metric("Institutional POC (VWAP)", f"₹{vwap_val}")
+        with m3: st.metric("Market Bias", "BULLISH 🟢" if curr_p > vwap_val else "BEARISH 🔴")
 
-    left, right = st.columns([2.2, 1])
-    with left:
-        render_chart(context["df"], signal, active_asset)
-    with right:
-        st.subheader("Filter Checklist")
-        checks_df = pd.DataFrame(
-            [{"Check": name, "Status": "PASS" if ok else "FAIL"} for name, ok in context["checks"]]
-        )
-        st.dataframe(checks_df, use_container_width=True, hide_index=True)
-        st.caption(f'Blocked by: {signal["blocked_by"] or "None"}')
+        # Stable Plotly Chart
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='Spot Price', line=dict(color='#deff9a', width=2.5)))
+        fig.add_trace(go.Scatter(x=df.index, y=df['VWAP'], name='VWAP (POC)', line=dict(color='#00ffff', width=1.5, dash='dash')))
+        fig.update_layout(template='plotly_dark', paper_bgcolor='#0b0e11', plot_bgcolor='#0b0e11', height=450, margin=dict(l=0,r=0,t=0,b=0), xaxis=dict(showgrid=False), yaxis=dict(gridcolor='#2d3748'))
+        st.plotly_chart(fig, use_container_width=True)
+        
+    else:
+        st.error("⚠️ Data Sync Failed. Market might be pre-open or YFinance API is throttling.")
+        st.info("💡 Pro-Tip: Please wait 1-2 minutes and refresh. YFinance takes time to stabilize exactly at 9:15 AM.")
 
-    tab1, tab2, tab3, tab4 = st.tabs(["Execution", "Trade Journal", "Signal Log", "Mistake Analysis"])
-    with tab1:
-        render_manual_trade_panel(signal)
+# ==============================================================================
+# 6. MASTER SMC PROMPT GENERATOR
+# ==============================================================================
+st.markdown("<hr style='border-color:#2d3748;'>", unsafe_allow_html=True)
+if st.button("🤖 Generate Master SMC Chat Prompt"):
+    prompt = f"""You are an Institutional Quant Trader, Smart Money Concept (SMC) Analyst, and High-Frequency Option Scalper specializing in NIFTY 50.
 
-    with tab2:
-        book = read_csv(TRADE_BOOK, TRADE_COLUMNS).sort_index(ascending=False)
-        if book.empty:
-            st.info("No trades saved yet.")
-        else:
-            st.dataframe(book.style.map(style_result, subset=["result"]), use_container_width=True, hide_index=True)
+Analyze the live market strictly using the real-time data provided below. Think like a hedge fund trader, not a retail trader.
 
-    with tab3:
-        signals = read_csv(SIGNAL_BOOK, SIGNAL_COLUMNS).sort_index(ascending=False)
-        st.dataframe(signals, use_container_width=True, hide_index=True)
+🔥 LIVE MARKET DATA
+- Nifty Spot Price: ₹{curr_p if 'curr_p' in locals() else 'Unknown'}
+- VWAP / POC: ₹{vwap_val if 'vwap_val' in locals() else 'Unknown'}
 
-    with tab4:
-        book = read_csv(TRADE_BOOK, TRADE_COLUMNS)
-        if book.empty:
-            st.info("Mistake analysis will appear after saved trades.")
-        else:
-            result_summary = book["result"].value_counts().reset_index()
-            result_summary.columns = ["Result", "Count"]
-            mistake_summary = book["mistake_tag"].replace("", "None").value_counts().reset_index()
-            mistake_summary.columns = ["Mistake", "Count"]
-            a, b = st.columns(2)
-            a.dataframe(result_summary, use_container_width=True, hide_index=True)
-            b.dataframe(mistake_summary, use_container_width=True, hide_index=True)
-            if stats["loss_streak"] >= 2:
-                st.error("Self-correction active: confidence, ADX and volume filters are tightened.")
-            elif stats["win_rate"] < 45 and len(book) >= 10:
-                st.warning("Win rate is weak. Reduce trade count and take only READY signals above 90% confidence.")
-            else:
-                st.success("Risk engine normal.")
+📊 INSTITUTIONAL SMC ANALYSIS REQUIRED
+1. MARKET STRUCTURE: Determine context (Trending Bearish, Reversal, Liquidity trap, or Range-bound).
+2. SMART MONEY ANALYSIS: Are institutions likely accumulating CALLS or PUTS? 
+3. OPTIONS FLOW ANALYSIS: Tell which side has higher probability (CE buyers or PE buyers).
+4. EXECUTION DECISION: Give ONE clear action: BUY CE, BUY PE, or NO TRADE.
 
-    time.sleep(8)
-    st.rerun()
-
-
-if __name__ == "__main__":
-    main()
+⚠️ STRICT RULES: Be concise. No education. Speak like a prop-desk scalper. Prioritize capital protection. Output in this format:
+✅ Market Bias: 
+✅ Institutional Direction: 
+✅ Best Trade: 
+✅ Confidence Score: 
+✅ Trap Warning: 
+✅ Final Verdict:
+"""
+    st.text_area("Copy this prompt into your Scalper Chat (ChatGPT/Claude):", value=prompt, height=350)

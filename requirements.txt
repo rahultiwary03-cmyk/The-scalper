@@ -3,6 +3,5 @@ yfinance
 pandas
 numpy
 plotly
-pytz
 requests
-pip install pyotp
+pyotp

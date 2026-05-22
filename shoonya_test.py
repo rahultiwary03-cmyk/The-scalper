@@ -16,9 +16,9 @@ import concurrent.futures  # 🚀 MULTITHREADING ENGINE ADDED
 # ==============================================================================
 SHOONYA_UID = "FN209492" 
 SHOONYA_PWD = "Rahul@1995" 
-SHOONYA_API_KEY = "3007acd3cd50a75e4e8eb1bfc0e1459a" 
+SHOONYA_API_KEY = "7cf713be1c14cb0020e7012d412c5f05" 
 SHOONYA_VC = "FN209492_U" 
-SHOONYA_TOTP_SECRET = "666J4TSFQRM624X75B6WZ32PMUH3477P" 
+SHOONYA_TOTP_SECRET = "7S4S46UM2426XWQZ5726OO6QIXD6LYNT" 
 
 # ==============================================================================
 # 2. SHOONYA LIVE DATA ENGINE

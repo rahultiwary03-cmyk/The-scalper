@@ -40,11 +40,36 @@ def shoonya_login():
         app_key_sha256 = hashlib.sha256(f"{SHOONYA_UID}|{SHOONYA_API_KEY}".encode('utf-8')).hexdigest()
         totp = pyotp.TOTP(SHOONYA_TOTP_SECRET).now()
         payload = {"apkversion": "1.0.0", "uid": SHOONYA_UID, "pwd": pwd_sha256, "factor2": totp, "vc": SHOONYA_VC, "appkey": app_key_sha256, "imei": "abc12345", "source": "API"}
-        res = requests.post('https://api.shoonya.com/NorenWClientTP/QuickAuth', data='jData=' + json.dumps(payload))
-        data = res.json()
-        if data.get('stat') == 'Ok': return data.get('susertoken'), "Success"
-        else: return None, data.get('emsg', 'Unknown Error')
-    except Exception as e: return None, str(e)
+        
+        # 🟢 Added Headers to bypass firewall / bot protection
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'application/json'
+        }
+        
+        res = requests.post(
+            'https://api.shoonya.com/NorenWClientTP/QuickAuth', 
+            data='jData=' + json.dumps(payload), 
+            headers=headers,
+            timeout=5
+        )
+        
+        # 🟢 Safe parsing logic so it never crashes with "line 1 column 1"
+        if not res.text.strip():
+            return None, "Empty response from Shoonya server."
+            
+        try:
+            data = res.json()
+        except ValueError:
+            return None, f"Firewall Blocked (HTTP {res.status_code}). Check Credentials/IP."
+            
+        if data.get('stat') == 'Ok': 
+            return data.get('susertoken'), "Success"
+        else: 
+            return None, data.get('emsg', 'Unknown Error')
+            
+    except Exception as e: 
+        return None, str(e)
 
 def get_shoonya_ltp(token, susertoken):
     if not susertoken: return None

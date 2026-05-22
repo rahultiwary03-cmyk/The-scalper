@@ -13,11 +13,11 @@ import concurrent.futures
 # ==============================================================================
 # 1. 🔑 SHOONYA API CREDENTIALS 
 # ==============================================================================
-SHOONYA_UID = "YOUR_UID" 
-SHOONYA_PWD = "YOUR_PASSWORD" 
-SHOONYA_API_KEY = "YOUR_API_KEY" 
-SHOONYA_VC = "YOUR_VENDOR_CODE" 
-SHOONYA_TOTP_SECRET = "YOUR_TOTP_SECRET" 
+SHOONYA_UID = "FN209492" 
+SHOONYA_PWD = "Rahul@1995" 
+SHOONYA_API_KEY = "3007acd3cd50a75e4e8eb1bfc0e1459a" 
+SHOONYA_VC = "FN209492_U" 
+SHOONYA_TOTP_SECRET = "666J4TSFQRM624X75B6WZ32PMUH3477P" 
 
 def shoonya_login():
     if not SHOONYA_API_KEY or SHOONYA_API_KEY == "YOUR_API_KEY": return None, "No API Key"

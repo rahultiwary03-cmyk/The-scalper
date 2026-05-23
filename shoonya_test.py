@@ -8,7 +8,7 @@ import datetime
 import pytz
 import requests
 import json
-import concurrent.futures
+from PIL import Image
 
 # ==============================================================================
 # 1. 🔑 SHOONYA API CREDENTIALS 
@@ -20,7 +20,7 @@ SHOONYA_VC = "FN209492_U"
 SHOONYA_TOTP_SECRET = "7S4S46UM2426XWQZ5726OO6QIXD6LYNT" 
 
 # ==============================================================================
-# 2. SHOONYA LIVE LOGIN (WEEKEND ERROR FIXED)
+# 2. SHOONYA LIVE LOGIN
 # ==============================================================================
 def shoonya_login():
     if not SHOONYA_API_KEY or SHOONYA_API_KEY == "YOUR_API_KEY": return None, "No API Key"
@@ -31,13 +31,8 @@ def shoonya_login():
         totp = pyotp.TOTP(SHOONYA_TOTP_SECRET).now()
         payload = {"apkversion": "1.0.0", "uid": SHOONYA_UID, "pwd": pwd_sha256, "factor2": totp, "vc": SHOONYA_VC, "appkey": app_key_sha256, "imei": "abc12345", "source": "API"}
         res = requests.post('https://api.shoonya.com/NorenWClientTP/QuickAuth', data='jData=' + json.dumps(payload), timeout=5)
-        
-        # Safe JSON parsing to prevent weekend crash
-        try:
-            data = res.json()
-        except ValueError:
-            return None, "Broker API Maintenance (Weekend Mode)"
-            
+        try: data = res.json()
+        except ValueError: return None, "Broker API Maintenance (Weekend Mode)"
         if data.get('stat') == 'Ok': return data.get('susertoken'), "Success"
         return None, data.get('emsg', 'Login Failed')
     except Exception as e: return None, "Broker API Offline"
@@ -57,7 +52,7 @@ def get_shoonya_ltp(token, susertoken):
 # ==============================================================================
 # 3. PAGE CONFIG & CRASH-PROOF STATE 
 # ==============================================================================
-st.set_page_config(page_title="QuantScalper AI v25.1", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="QuantScalper AI v27.0", layout="wide", initial_sidebar_state="collapsed")
 
 if 'trade_active' not in st.session_state: st.session_state.trade_active = False
 if 'trade_details' not in st.session_state: st.session_state.trade_details = {}
@@ -77,122 +72,135 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# ==============================================================================
-# 4. HEADER & SMART EXECUTION BUTTONS
-# ==============================================================================
 sh_status = "<span style='color:#00ff66;'>🟢 API Linked</span>" if st.session_state.shoonya_token else f"<span style='color:#ffaa00;'>🟠 API: {st.session_state.shoonya_msg} | PAPER TRADING</span>"
-st.markdown(f"<h1 style='margin:0; font-weight:800;'>QUANT<span style='color:#deff9a;'>SCALPER AI</span> v25.1 <span style='font-size:14px;'>{sh_status}</span></h1>", unsafe_allow_html=True)
+st.markdown(f"<h1 style='margin:0; font-weight:800;'>QUANT<span style='color:#deff9a;'>SCALPER AI</span> v27.0 <span style='font-size:14px;'>{sh_status}</span></h1>", unsafe_allow_html=True)
 st.markdown("<hr style='border-color:#2d3748; margin: 10px 0 15px 0;'>", unsafe_allow_html=True)
 
-c1, c2, c3 = st.columns([1, 1, 3])
-with c1:
-    if st.button("🟢 EXECUTE CE (Bullish Pullback)", use_container_width=True):
-        st.session_state.trade_active = True
-        st.session_state.trade_details = {'Type': 'CE', 'Entry': 'Market', 'Status': 'Risk Managed'}
-with c2:
-    if st.button("🔴 EXECUTE PE (Bearish Pullback)", use_container_width=True):
-        st.session_state.trade_active = True
-        st.session_state.trade_details = {'Type': 'PE', 'Entry': 'Market', 'Status': 'Risk Managed'}
-
-if st.session_state.trade_active:
-    with c3:
-        st.warning(f"🔥 ACTIVE TRADE RUNNING: {st.session_state.trade_details['Type']} | Strict 2.5x ATR Stop-Loss Active.")
-        if st.button("⏹️ SQUARE-OFF & BOOK PNL"):
-            st.session_state.trade_active = False
-            st.session_state.trade_details = {}
-            st.rerun()
-
 # ==============================================================================
-# 5. ADVANCED SMC QUANT ENGINE (VWAP ZERO FIXED)
+# TABS SETUP: LIVE vs SCREENSHOT ANALYZER
 # ==============================================================================
-@st.cache_data(ttl=30)
-def fetch_live_market_data():
-    try:
-        for attempt in range(3):
-            df = yf.download('^NSEI', period='3d', interval='1m', progress=False)
-            if df is not None and not df.empty and len(df) > 50:
-                if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-                return df
-            time.sleep(1)
-        return None
-    except: return None
+tab_live, tab_screenshot = st.tabs(["🚀 LIVE TERMINAL", "📸 SCREENSHOT ANALYZER (No CSV Needed)"])
 
-with st.spinner('Syncing Multi-Timeframe Institutional Data...'):
-    df = fetch_live_market_data()
-    
-    if df is not None:
-        curr_p = round(float(df['Close'].iloc[-1]), 2)
-        
-        # 1. MACRO TREND (200 EMA)
-        df['EMA_200'] = df['Close'].ewm(span=200, adjust=False).mean()
-        macro_trend = round(float(df['EMA_200'].iloc[-1]), 2)
-        
-        # 2. MICRO POC (VWAP - Weekend Fix)
-        # Instead of just today, calculate VWAP for the last available trading day
-        last_trading_day = df.index[-1].date()
-        day_data = df[df.index.date == last_trading_day].copy()
-        
-        if not day_data.empty and day_data['Volume'].sum() > 0:
-            day_data['VWAP'] = (day_data['Close'] * day_data['Volume']).cumsum() / (day_data['Volume'].cumsum() + 1e-10)
-            vwap_val = round(float(day_data['VWAP'].iloc[-1]), 2)
-            df.loc[day_data.index, 'VWAP'] = day_data['VWAP']
-        else:
-            # Fallback if volume is 0 (like on weekends)
-            vwap_val = curr_p
-            df['VWAP'] = df['Close'].ewm(span=20, adjust=False).mean() # Fallback to 20 EMA for VWAP proxy
+# ------------------------------------------------------------------------------
+# TAB 1: LIVE TERMINAL
+# ------------------------------------------------------------------------------
+with tab_live:
+    c1, c2, c3 = st.columns([1, 1, 3])
+    with c1:
+        if st.button("🟢 EXECUTE CE (Bullish Pullback)", use_container_width=True):
+            st.session_state.trade_active = True
+            st.session_state.trade_details = {'Type': 'CE', 'Entry': 'Market', 'Status': 'Risk Managed'}
+    with c2:
+        if st.button("🔴 EXECUTE PE (Bearish Pullback)", use_container_width=True):
+            st.session_state.trade_active = True
+            st.session_state.trade_details = {'Type': 'PE', 'Entry': 'Market', 'Status': 'Risk Managed'}
 
-        # 3. DYNAMIC STOP LOSS (ATR 14)
-        high, low, close = df['High'], df['Low'], df['Close']
-        tr = pd.concat([high - low, (high - close.shift(1)).abs(), (low - close.shift(1)).abs()], axis=1).max(axis=1)
-        atr_val = round(float(tr.rolling(14).mean().iloc[-1]), 2)
-        safe_sl_pts = max(20.0, round(atr_val * 2.5, 1))
+    if st.session_state.trade_active:
+        with c3:
+            st.warning(f"🔥 ACTIVE TRADE RUNNING: {st.session_state.trade_details['Type']} | Strict 2.5x ATR Stop-Loss Active.")
+            if st.button("⏹️ SQUARE-OFF & BOOK PNL"):
+                st.session_state.trade_active = False
+                st.session_state.trade_details = {}
+                st.rerun()
+
+    @st.cache_data(ttl=30)
+    def fetch_live_market_data():
+        try:
+            for attempt in range(3):
+                df = yf.download('^NSEI', period='3d', interval='1m', progress=False)
+                if df is not None and not df.empty and len(df) > 50:
+                    if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+                    return df
+                time.sleep(1)
+            return None
+        except: return None
+
+    with st.spinner('Syncing Multi-Timeframe Institutional Data...'):
+        df = fetch_live_market_data()
         
-        if st.session_state.shoonya_token:
-            ltp = get_shoonya_ltp('26000', st.session_state.shoonya_token)
-            if ltp: curr_p = ltp
+        if df is not None:
+            curr_p = round(float(df['Close'].iloc[-1]), 2)
+            df['EMA_200'] = df['Close'].ewm(span=200, adjust=False).mean()
+            macro_trend = round(float(df['EMA_200'].iloc[-1]), 2)
             
-        m1, m2, m3, m4 = st.columns(4)
-        with m1: st.metric("NIFTY SPOT", f"₹{curr_p}")
-        with m2: st.metric("Micro POC (VWAP)", f"₹{vwap_val}")
-        with m3: st.metric("Macro Trend (200 EMA)", f"₹{macro_trend}")
-        with m4: st.metric("Safe SL Buffer (2.5x ATR)", f"{safe_sl_pts} pts")
-        
-        st.markdown("<br>", unsafe_allow_html=True)
-        if curr_p > macro_trend and curr_p > vwap_val: bias, color = "STRONG BULLISH (Only Look for CE Pullbacks)", "#00ff66"
-        elif curr_p < macro_trend and curr_p < vwap_val: bias, color = "STRONG BEARISH (Only Look for PE Pullbacks)", "#ff3333"
-        elif curr_p > macro_trend and curr_p < vwap_val: bias, color = "CHOPPY (Macro Bullish, Micro Bearish - WAIT)", "#ffaa00"
-        else: bias, color = "CHOPPY (Macro Bearish, Micro Bullish - WAIT)", "#ffaa00"
-        
-        st.markdown(f"<div class='metric-box'><b>AI Master Bias:</b> <span style='color:{color}; font-size:18px;'>{bias}</span></div>", unsafe_allow_html=True)
-        st.markdown("<br>", unsafe_allow_html=True)
+            last_trading_day = df.index[-1].date()
+            day_data = df[df.index.date == last_trading_day].copy()
+            if not day_data.empty and day_data['Volume'].sum() > 0:
+                day_data['VWAP'] = (day_data['Close'] * day_data['Volume']).cumsum() / (day_data['Volume'].cumsum() + 1e-10)
+                vwap_val = round(float(day_data['VWAP'].iloc[-1]), 2)
+                df.loc[day_data.index, 'VWAP'] = day_data['VWAP']
+            else:
+                vwap_val = curr_p; df['VWAP'] = df['Close'].ewm(span=20, adjust=False).mean()
 
-        # Plotly Chart
-        plot_df = df.tail(180) 
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['Close'], name='Spot Price', line=dict(color='#deff9a', width=2.5)))
-        if 'VWAP' in plot_df.columns:
-            fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['VWAP'], name='VWAP (Micro)', line=dict(color='#00ffff', width=2, dash='dash')))
-        fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['EMA_200'], name='200 EMA (Macro)', line=dict(color='#ffaa00', width=2)))
+            high, low, close = df['High'], df['Low'], df['Close']
+            tr = pd.concat([high - low, (high - close.shift(1)).abs(), (low - close.shift(1)).abs()], axis=1).max(axis=1)
+            atr_val = round(float(tr.rolling(14).mean().iloc[-1]), 2)
+            safe_sl_pts = max(20.0, round(atr_val * 2.5, 1))
+            
+            if st.session_state.shoonya_token:
+                ltp = get_shoonya_ltp('26000', st.session_state.shoonya_token)
+                if ltp: curr_p = ltp
+                
+            m1, m2, m3, m4 = st.columns(4)
+            with m1: st.metric("NIFTY SPOT", f"₹{curr_p}")
+            with m2: st.metric("Micro POC (VWAP)", f"₹{vwap_val}")
+            with m3: st.metric("Macro Trend (200 EMA)", f"₹{macro_trend}")
+            with m4: st.metric("Safe SL Buffer (2.5x ATR)", f"{safe_sl_pts} pts")
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            if curr_p > macro_trend and curr_p > vwap_val: bias, color = "STRONG BULLISH (Only Look for CE Pullbacks)", "#00ff66"
+            elif curr_p < macro_trend and curr_p < vwap_val: bias, color = "STRONG BEARISH (Only Look for PE Pullbacks)", "#ff3333"
+            elif curr_p > macro_trend and curr_p < vwap_val: bias, color = "CHOPPY (Macro Bullish, Micro Bearish - WAIT)", "#ffaa00"
+            else: bias, color = "CHOPPY (Macro Bearish, Micro Bullish - WAIT)", "#ffaa00"
+            
+            st.markdown(f"<div class='metric-box'><b>AI Master Bias:</b> <span style='color:{color}; font-size:18px;'>{bias}</span></div>", unsafe_allow_html=True)
+            
+            plot_df = df.tail(180) 
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['Close'], name='Spot Price', line=dict(color='#deff9a', width=2.5)))
+            if 'VWAP' in plot_df.columns: fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['VWAP'], name='VWAP (Micro)', line=dict(color='#00ffff', width=2, dash='dash')))
+            fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['EMA_200'], name='200 EMA (Macro)', line=dict(color='#ffaa00', width=2)))
+            
+            fig.update_layout(template='plotly_dark', paper_bgcolor='#0b0e11', plot_bgcolor='#0b0e11', height=450, margin=dict(l=0,r=0,t=0,b=0), xaxis=dict(showgrid=False), yaxis=dict(gridcolor='#2d3748'))
+            st.plotly_chart(fig, use_container_width=True)
+            
+        else:
+            st.error("⚠️ Data Sync Failed.")
+
+# ------------------------------------------------------------------------------
+# TAB 2: SCREENSHOT ANALYZER (Tension Free!)
+# ------------------------------------------------------------------------------
+with tab_screenshot:
+    st.markdown("### 📸 AI Chart Analyzer & Trading Journal")
+    st.info("CSV file download karne ki koi zaroorat nahi hai! Apne chart ka screenshot lijiye (TradingView / Zerodha) aur yahan upload karein.")
+    
+    col_img, col_prompt = st.columns([1, 1])
+    
+    with col_img:
+        uploaded_image = st.file_uploader("Upload Chart Screenshot (PNG/JPG)", type=['png', 'jpg', 'jpeg'])
+        if uploaded_image is not None:
+            image = Image.open(uploaded_image)
+            st.image(image, caption="Uploaded Chart", use_container_width=True)
+            st.success("✅ Screenshot Loaded! Ab right side ka prompt copy karke AI (Gemini) ko bhejein.")
+        else:
+            st.markdown("<div style='height:300px; border:2px dashed #2d3748; display:flex; align-items:center; justify-content:center; color:#8b949e; border-radius:10px;'>No Image Uploaded</div>", unsafe_allow_html=True)
+
+    with col_prompt:
+        st.markdown("### 🤖 Copy This Prompt")
+        st.markdown("Niche diye gaye prompt ko copy karein aur apni photo (Screenshot) ke sath mujhe (AI ko) chat mein bhejein. Main aapko bataunga ki isme kya trap hai aur aage kya karna hai.")
         
-        fig.update_layout(template='plotly_dark', paper_bgcolor='#0b0e11', plot_bgcolor='#0b0e11', height=450, margin=dict(l=0,r=0,t=0,b=0), xaxis=dict(showgrid=False), yaxis=dict(gridcolor='#2d3748'))
-        st.plotly_chart(fig, use_container_width=True)
+        screenshot_prompt = """Hello AI Quant! I have uploaded a screenshot of my trading chart. Please act as a Smart Money Concept (SMC) Expert and analyze it for me.
+
+Task 1: Identify the Phase
+- Is it Accumulation, Manipulation (Trap/Liquidity Grab), or Distribution?
+
+Task 2: Retailer Trap
+- Where are the retail traders trapped in this chart (Call buyers or Put buyers)?
+
+Task 3: Execution Advice
+- Based on the visible price action, should I look for a Pullback Entry, Wait, or Avoid trading entirely?
+- If I take a trade here, where should my logical Stop Loss be placed to avoid getting hunted?
+
+Be strictly analytical and give me a clear "Hedge-Fund" style breakdown."""
         
-    else:
-        st.error("⚠️ Data Sync Failed. Please wait for YFinance to stabilize.")
-
-# ==============================================================================
-# 6. MASTER SMC PROMPT GENERATOR
-# ==============================================================================
-st.markdown("<hr style='border-color:#2d3748;'>", unsafe_allow_html=True)
-if st.button("🤖 Generate Master SMC Chat Prompt"):
-    prompt = f"""You are an Institutional Quant Trader and Smart Money Concept (SMC) Analyst.
-
-🔥 LIVE MARKET DATA
-- Nifty Spot Price: ₹{curr_p if 'curr_p' in locals() else 'Unknown'}
-- Micro POC (VWAP): ₹{vwap_val if 'vwap_val' in locals() else 'Unknown'}
-- Macro Trend (200 EMA): ₹{macro_trend if 'macro_trend' in locals() else 'Unknown'}
-- Dynamic ATR SL: {safe_sl_pts if 'safe_sl_pts' in locals() else 'Unknown'} pts
-
-Explain the alignment between the Macro Trend (200 EMA) and Micro Trend (VWAP). If they are aligned, recommend a safe "Pullback Entry" with a strict {safe_sl_pts if 'safe_sl_pts' in locals() else '2.5x ATR'} point stop-loss. If they contradict, advise to stay out of the market.
-"""
-    st.text_area("Copy this prompt into your Scalper Chat (ChatGPT/Claude):", value=prompt, height=250)
+        st.text_area("Copy and Paste into AI Chat:", value=screenshot_prompt, height=350)

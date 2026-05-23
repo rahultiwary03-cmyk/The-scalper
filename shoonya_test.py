@@ -52,7 +52,7 @@ def get_shoonya_ltp(token, susertoken):
 # ==============================================================================
 # 3. PAGE CONFIG & CRASH-PROOF STATE 
 # ==============================================================================
-st.set_page_config(page_title="QuantScalper AI v27.0", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="QuantScalper AI v28.0", layout="wide", initial_sidebar_state="collapsed")
 
 if 'trade_active' not in st.session_state: st.session_state.trade_active = False
 if 'trade_details' not in st.session_state: st.session_state.trade_details = {}
@@ -69,17 +69,18 @@ st.markdown("""
     div[data-testid="stMetricValue"] > div { color: #deff9a !important; font-size: 26px !important; }
     div[data-testid="stMetricLabel"] > label { color: #8b949e !important; font-size: 13px !important; font-weight: 700 !important; }
     .metric-box { background: rgba(20, 24, 31, 0.5); padding: 15px; border-radius: 10px; border: 1px solid #2d3748; }
+    .analysis-box { background: rgba(0, 255, 255, 0.05); border-left: 4px solid #00ffff; padding: 15px; border-radius: 8px; margin-top: 15px;}
     </style>
     """, unsafe_allow_html=True)
 
 sh_status = "<span style='color:#00ff66;'>🟢 API Linked</span>" if st.session_state.shoonya_token else f"<span style='color:#ffaa00;'>🟠 API: {st.session_state.shoonya_msg} | PAPER TRADING</span>"
-st.markdown(f"<h1 style='margin:0; font-weight:800;'>QUANT<span style='color:#deff9a;'>SCALPER AI</span> v27.0 <span style='font-size:14px;'>{sh_status}</span></h1>", unsafe_allow_html=True)
+st.markdown(f"<h1 style='margin:0; font-weight:800;'>QUANT<span style='color:#deff9a;'>SCALPER AI</span> v28.0 <span style='font-size:14px;'>{sh_status}</span></h1>", unsafe_allow_html=True)
 st.markdown("<hr style='border-color:#2d3748; margin: 10px 0 15px 0;'>", unsafe_allow_html=True)
 
 # ==============================================================================
-# TABS SETUP: LIVE vs SCREENSHOT ANALYZER
+# TABS SETUP
 # ==============================================================================
-tab_live, tab_screenshot = st.tabs(["🚀 LIVE TERMINAL", "📸 SCREENSHOT ANALYZER (No CSV Needed)"])
+tab_live, tab_screenshot = st.tabs(["🚀 LIVE TERMINAL", "📸 AI VISION LAB (Upload / Paste)"])
 
 # ------------------------------------------------------------------------------
 # TAB 1: LIVE TERMINAL
@@ -168,39 +169,52 @@ with tab_live:
             st.error("⚠️ Data Sync Failed.")
 
 # ------------------------------------------------------------------------------
-# TAB 2: SCREENSHOT ANALYZER (Tension Free!)
+# TAB 2: AI VISION LAB (Screenshot Paste Support)
 # ------------------------------------------------------------------------------
 with tab_screenshot:
-    st.markdown("### 📸 AI Chart Analyzer & Trading Journal")
-    st.info("CSV file download karne ki koi zaroorat nahi hai! Apne chart ka screenshot lijiye (TradingView / Zerodha) aur yahan upload karein.")
+    st.markdown("### 📸 Copy & Paste Your Trading Chart")
+    st.info("💡 **Pro Tip:** TradingView या Kite से स्क्रीनशॉट लें (Windows: Win + Shift + S) और सीधे नीचे वाले डब्बे में **Ctrl + V** दबाकर पेस्ट कर दें!")
     
     col_img, col_prompt = st.columns([1, 1])
     
     with col_img:
-        uploaded_image = st.file_uploader("Upload Chart Screenshot (PNG/JPG)", type=['png', 'jpg', 'jpeg'])
+        uploaded_image = st.file_uploader("Click here and press Ctrl+V to paste image", type=['png', 'jpg', 'jpeg'])
         if uploaded_image is not None:
             image = Image.open(uploaded_image)
-            st.image(image, caption="Uploaded Chart", use_container_width=True)
-            st.success("✅ Screenshot Loaded! Ab right side ka prompt copy karke AI (Gemini) ko bhejein.")
+            st.image(image, caption="Uploaded Chart for AI Analysis", use_container_width=True)
+            
+            # Simulated Processing Alert
+            with st.spinner("Preparing Image for Gemini Vision Analysis..."):
+                time.sleep(1)
+            st.success("✅ Chart Captured Successfully!")
+            
+            st.markdown("""
+            <div class='analysis-box'>
+                <h4 style='color:#00ffff; margin-top:0;'>⚠️ API Connection Notice</h4>
+                <p style='font-size:14px;'>Since this Streamlit server doesn't have a paid Gemini API key embedded yet, it cannot scan the pixels directly. <br><br>
+                <b>Next Step:</b> Right side वाले प्रॉम्प्ट को कॉपी करें और इस फोटो के साथ सीधे <b>Gemini Chat</b> में पेस्ट कर दें। AI (मैं) आपको तुरंत एनालाइज़ करके दे दूँगा!</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
         else:
-            st.markdown("<div style='height:300px; border:2px dashed #2d3748; display:flex; align-items:center; justify-content:center; color:#8b949e; border-radius:10px;'>No Image Uploaded</div>", unsafe_allow_html=True)
+            st.markdown("<div style='height:300px; border:2px dashed #2d3748; display:flex; align-items:center; justify-content:center; color:#8b949e; border-radius:10px;'>Awaiting Screenshot (Ctrl+V)</div>", unsafe_allow_html=True)
 
     with col_prompt:
-        st.markdown("### 🤖 Copy This Prompt")
-        st.markdown("Niche diye gaye prompt ko copy karein aur apni photo (Screenshot) ke sath mujhe (AI ko) chat mein bhejein. Main aapko bataunga ki isme kya trap hai aur aage kya karna hai.")
+        st.markdown("### 🤖 Strategy Doctor Prompt")
+        st.markdown("इस प्रॉम्प्ट को कॉपी करें और अपने स्क्रीनशॉट के साथ AI चैट में भेजें:")
         
-        screenshot_prompt = """Hello AI Quant! I have uploaded a screenshot of my trading chart. Please act as a Smart Money Concept (SMC) Expert and analyze it for me.
+        screenshot_prompt = """Hello Gemini! I have attached a screenshot of my live Nifty chart. 
+Please act as an Elite Quant Developer and analyze this chart to fix the flaws in my trading system.
 
-Task 1: Identify the Phase
-- Is it Accumulation, Manipulation (Trap/Liquidity Grab), or Distribution?
+1. Price Action Analysis:
+- Based on the image, where did the Operator (Smart Money) trap retail buyers or sellers?
+- Did the price respect the VWAP or 200 EMA?
 
-Task 2: Retailer Trap
-- Where are the retail traders trapped in this chart (Call buyers or Put buyers)?
+2. Strategy Diagnosis:
+- If my algorithm took an entry here, where exactly should the Stop Loss be to avoid a wick hit?
+- Is this a trending market or a choppy/sideways market where I should avoid trading?
 
-Task 3: Execution Advice
-- Based on the visible price action, should I look for a Pullback Entry, Wait, or Avoid trading entirely?
-- If I take a trade here, where should my logical Stop Loss be placed to avoid getting hunted?
-
-Be strictly analytical and give me a clear "Hedge-Fund" style breakdown."""
+3. Code Improvement:
+- Based on this specific chart pattern, write a small logic (in Python/Streamlit format) that I can add to my system to filter out bad trades like this in the future."""
         
-        st.text_area("Copy and Paste into AI Chat:", value=screenshot_prompt, height=350)
+        st.text_area("Copy and Paste into Gemini Chat:", value=screenshot_prompt, height=400)

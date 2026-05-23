@@ -7,7 +7,6 @@ import time
 import datetime
 import requests
 import json
-from PIL import Image
 
 # ==============================================================================
 # 1. 🔑 SHOONYA API CREDENTIALS 
@@ -16,10 +15,10 @@ SHOONYA_UID = "FN209492"
 SHOONYA_PWD = "YOUR_PASSWORD" 
 SHOONYA_API_KEY = "7cf713be1c14cb0020e7012d412c5f05" 
 SHOONYA_VC = "FN209492_U" 
-SHOONYA_TOTP_SECRET = "7S4S46UM2426XWQZ5726OO6QIXD6LYNT"
+SHOONYA_TOTP_SECRET = "7S4S46UM2426XWQZ5726OO6QIXD6LYNT" 
 
 # ==============================================================================
-# 2. SHOONYA LIVE LOGIN & ORDER EXECUTION ENGINE
+# 2. SHOONYA LIVE LOGIN & ORDER EXECUTION
 # ==============================================================================
 def shoonya_login():
     if not SHOONYA_API_KEY or SHOONYA_API_KEY == "YOUR_API_KEY": return None, "No API Key"
@@ -46,14 +45,13 @@ def get_shoonya_ltp(token, susertoken):
         return None
     except: return None
 
-# 🚀 THE ALGO ORDER FUNCTION
 def place_shoonya_order(susertoken, trading_symbol, qty=25, buy_sell='B'):
     if not susertoken: return False, "API Not Connected"
     try:
         payload = {
             "uid": SHOONYA_UID, "actid": SHOONYA_UID, "exch": "NFO", 
             "tsym": trading_symbol, "qty": str(qty), "prc": "0", 
-            "prd": "M", # 'M' = NRML/Margin (Use 'I' for MIS Intraday)
+            "prd": "M", 
             "trantype": buy_sell, "prctyp": "MKT", "ret": "DAY"
         }
         headers = {'Authorization': f'Bearer {SHOONYA_UID} {susertoken}'}
@@ -66,8 +64,10 @@ def place_shoonya_order(susertoken, trading_symbol, qty=25, buy_sell='B'):
 # ==============================================================================
 # 3. PAGE CONFIG & CRASH-PROOF STATE 
 # ==============================================================================
-st.set_page_config(page_title="QuantScalper AI v29.0 [ALGO]", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="QuantScalper AI v31.0", layout="wide", initial_sidebar_state="collapsed")
 
+# 🚀 NEW: Trade History Logger added to Session State
+if 'trade_history' not in st.session_state: st.session_state.trade_history = []
 if 'trade_active' not in st.session_state: st.session_state.trade_active = False
 if 'trade_details' not in st.session_state: st.session_state.trade_details = {}
 if 'shoonya_token' not in st.session_state:
@@ -83,25 +83,30 @@ st.markdown("""
     div[data-testid="stMetricValue"] > div { color: #deff9a !important; font-size: 26px !important; }
     div[data-testid="stMetricLabel"] > label { color: #8b949e !important; font-size: 13px !important; font-weight: 700 !important; }
     .metric-box { background: rgba(20, 24, 31, 0.5); padding: 15px; border-radius: 10px; border: 1px solid #2d3748; }
+    .live-pnl-box { background: #14181f; border-left: 5px solid #00ffff; padding: 15px; border-radius: 8px; margin-top: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 4. ALGO CONTROL PANEL (HEADER)
+# 4. ALGO CONTROL PANEL
 # ==============================================================================
-sh_status = "<span style='color:#00ff66;'>🟢 API Linked</span>" if st.session_state.shoonya_token else f"<span style='color:#ffaa00;'>🟠 API: {st.session_state.shoonya_msg}</span>"
-st.markdown(f"<h1 style='margin:0; font-weight:800;'>QUANT<span style='color:#deff9a;'>SCALPER AI</span> v29.0 <span style='font-size:14px;'>{sh_status}</span></h1>", unsafe_allow_html=True)
+sh_status = "<span style='color:#00ff66;'>🟢 API Linked</span>" if st.session_state.shoonya_token else f"<span style='color:#ffaa00;'>🟠 PAPER TRADING MODE</span>"
 
-st.markdown("""<div style='background:#1a1a1a; padding:10px; border-radius:8px; border:1px solid #ffaa00; margin-bottom:15px;'>
-<b>⚙️ ALGO SETTINGS (REQUIRED):</b> Ensure Expiry format is exactly like Shoonya (e.g., 30MAY24).
-</div>""", unsafe_allow_html=True)
+# Calculate Total PnL for the Day
+total_trades_today = len(st.session_state.trade_history)
+net_pnl_today = sum([trade['PnL (Points)'] for trade in st.session_state.trade_history]) if total_trades_today > 0 else 0
+pnl_color = "#00ff66" if net_pnl_today >= 0 else "#ff3333"
+
+col_h1, col_h2 = st.columns([2, 1])
+with col_h1: st.markdown(f"<h1 style='margin:0; font-weight:800;'>QUANT<span style='color:#deff9a;'>SCALPER AI</span> v31.0 <span style='font-size:14px;'>{sh_status}</span></h1>", unsafe_allow_html=True)
+with col_h2: st.markdown(f"<div style='text-align:right; font-size:18px; font-weight:bold;'>Total Trades: {total_trades_today} | Day PnL: <span style='color:{pnl_color};'>{net_pnl_today} pts</span></div>", unsafe_allow_html=True)
+
+st.markdown("<hr style='border-color:#2d3748; margin: 5px 0 15px 0;'>", unsafe_allow_html=True)
 
 c_opt1, c_opt2, c_opt3 = st.columns(3)
 with c_opt1: expiry_date = st.text_input("Current Nifty Expiry", value="30MAY24")
 with c_opt2: trade_qty = st.number_input("Quantity (1 Lot = 25)", min_value=25, step=25, value=25)
 with c_opt3: live_mode = st.toggle("🔴 ENABLE LIVE TRADING (Real Money)", value=False)
-
-st.markdown("<hr style='border-color:#2d3748; margin: 5px 0 15px 0;'>", unsafe_allow_html=True)
 
 # ==============================================================================
 # 5. DATA FETCH & SIGNAL GENERATION
@@ -120,7 +125,7 @@ def fetch_live_market_data():
 
 with st.spinner('Syncing HFT Algorithms...'):
     df = fetch_live_market_data()
-    curr_p = 23750 # Fallback
+    curr_p = 23750 
     
     if df is not None:
         curr_p = round(float(df['Close'].iloc[-1]), 2)
@@ -149,56 +154,93 @@ with st.spinner('Syncing HFT Algorithms...'):
         with m3: st.metric("Macro Trend (200 EMA)", f"₹{macro_trend}")
         with m4: st.metric("Dynamic SL Buffer", f"{safe_sl_pts} pts")
         
-        # Automatic ATM Strike Calculation
         atm_strike = int(round(curr_p / 50) * 50)
         ce_symbol = f"NIFTY{expiry_date}C{atm_strike}"
         pe_symbol = f"NIFTY{expiry_date}P{atm_strike}"
 
-        # ------------------------------------------------------------------------------
-        # 6. AUTO-EXECUTION BUTTONS (THE ALGO TRIGGERS)
-        # ------------------------------------------------------------------------------
         st.markdown("<br>", unsafe_allow_html=True)
+        if curr_p > macro_trend and curr_p > vwap_val: bias, color = "STRONG BULLISH (Trend Aligned)", "#00ff66"
+        elif curr_p < macro_trend and curr_p < vwap_val: bias, color = "STRONG BEARISH (Trend Aligned)", "#ff3333"
+        else: bias, color = "CHOPPY (Macro & Micro Contradiction - WAIT)", "#ffaa00"
+        
+        st.markdown(f"<div class='metric-box'><b>AI Master Bias:</b> <span style='color:{color}; font-size:18px;'>{bias}</span></div><br>", unsafe_allow_html=True)
+
+        # ------------------------------------------------------------------------------
+        # 6. AUTO-EXECUTION BUTTONS & LIVE PNL MONITORING
+        # ------------------------------------------------------------------------------
         c1, c2, c3 = st.columns([1, 1, 3])
         
         with c1:
-            if st.button(f"🟢 BUY CE (Strike: {atm_strike})", use_container_width=True):
+            if st.button(f"🟢 BUY CE (Strike: {atm_strike})", use_container_width=True) and not st.session_state.trade_active:
+                current_time = datetime.datetime.now().strftime("%H:%M:%S")
                 if live_mode and st.session_state.shoonya_token:
                     success, msg = place_shoonya_order(st.session_state.shoonya_token, ce_symbol, trade_qty, 'B')
                     if success: 
-                        st.success(f"LIVE ORDER PLACED! Order ID: {msg}")
                         st.session_state.trade_active = True
-                        st.session_state.trade_details = {'Type': 'CE', 'Symbol': ce_symbol, 'Qty': trade_qty, 'Status': 'LIVE'}
-                    else: st.error(f"Order Failed: {msg}")
+                        st.session_state.trade_details = {'Type': 'CE', 'Symbol': ce_symbol, 'Qty': trade_qty, 'Status': 'LIVE', 'Entry_Price': curr_p, 'Time': current_time}
                 else:
-                    st.toast("PAPER TRADE: Simulated CE Buy.")
                     st.session_state.trade_active = True
-                    st.session_state.trade_details = {'Type': 'CE', 'Symbol': ce_symbol, 'Qty': trade_qty, 'Status': 'PAPER'}
+                    st.session_state.trade_details = {'Type': 'CE', 'Symbol': ce_symbol, 'Qty': trade_qty, 'Status': 'PAPER', 'Entry_Price': curr_p, 'Time': current_time}
+                st.rerun()
 
         with c2:
-            if st.button(f"🔴 BUY PE (Strike: {atm_strike})", use_container_width=True):
+            if st.button(f"🔴 BUY PE (Strike: {atm_strike})", use_container_width=True) and not st.session_state.trade_active:
+                current_time = datetime.datetime.now().strftime("%H:%M:%S")
                 if live_mode and st.session_state.shoonya_token:
                     success, msg = place_shoonya_order(st.session_state.shoonya_token, pe_symbol, trade_qty, 'B')
                     if success: 
-                        st.success(f"LIVE ORDER PLACED! Order ID: {msg}")
                         st.session_state.trade_active = True
-                        st.session_state.trade_details = {'Type': 'PE', 'Symbol': pe_symbol, 'Qty': trade_qty, 'Status': 'LIVE'}
-                    else: st.error(f"Order Failed: {msg}")
+                        st.session_state.trade_details = {'Type': 'PE', 'Symbol': pe_symbol, 'Qty': trade_qty, 'Status': 'LIVE', 'Entry_Price': curr_p, 'Time': current_time}
                 else:
-                    st.toast("PAPER TRADE: Simulated PE Buy.")
                     st.session_state.trade_active = True
-                    st.session_state.trade_details = {'Type': 'PE', 'Symbol': pe_symbol, 'Qty': trade_qty, 'Status': 'PAPER'}
+                    st.session_state.trade_details = {'Type': 'PE', 'Symbol': pe_symbol, 'Qty': trade_qty, 'Status': 'PAPER', 'Entry_Price': curr_p, 'Time': current_time}
+                st.rerun()
 
         if st.session_state.trade_active:
             with c3:
                 trade = st.session_state.trade_details
-                status_color = "#00ff66" if trade['Status'] == 'LIVE' else "#ffaa00"
-                st.markdown(f"<div style='border:1px solid {status_color}; padding:10px; border-radius:8px;'><b>🔥 ACTIVE {trade['Status']} TRADE:</b> {trade['Symbol']} | Qty: {trade['Qty']}</div>", unsafe_allow_html=True)
                 
-                if st.button("⏹️ SQUARE-OFF POSITION"):
+                # 🚀 LIVE PNL CALCULATION
+                if trade['Type'] == 'CE': live_points = round(curr_p - trade['Entry_Price'], 2)
+                else: live_points = round(trade['Entry_Price'] - curr_p, 2)
+                
+                pnl_color_live = "#00ff66" if live_points >= 0 else "#ff3333"
+                status_color = "#00ff66" if trade['Status'] == 'LIVE' else "#ffaa00"
+                
+                st.markdown(f"""
+                <div class='live-pnl-box' style='border-left-color: {status_color};'>
+                    <div style='display:flex; justify-content:space-between; align-items:center;'>
+                        <div>
+                            <span style='color:{status_color}; font-weight:bold; font-size:12px;'>● {trade['Status']} TRADE</span><br>
+                            <span style='font-size:18px; font-weight:bold;'>{trade['Symbol']}</span><br>
+                            <span style='color:#8b949e;'>Entry Spot: ₹{trade['Entry_Price']} | Qty: {trade['Qty']}</span>
+                        </div>
+                        <div style='text-align:right;'>
+                            <span style='color:#8b949e; font-size:12px;'>Live Spot PnL</span><br>
+                            <span style='color:{pnl_color_live}; font-size:24px; font-weight:bold;'>{'+' if live_points>0 else ''}{live_points} pts</span>
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                if st.button("⏹️ SQUARE-OFF & SAVE LOG", use_container_width=True):
+                    exit_time = datetime.datetime.now().strftime("%H:%M:%S")
                     if trade['Status'] == 'LIVE' and st.session_state.shoonya_token:
-                        success, msg = place_shoonya_order(st.session_state.shoonya_token, trade['Symbol'], trade['Qty'], 'S')
-                        if success: st.success("Position Closed Successfully!")
-                        else: st.error(f"Square-off Failed: {msg} (Close manually on Broker App!)")
+                        place_shoonya_order(st.session_state.shoonya_token, trade['Symbol'], trade['Qty'], 'S')
+                    
+                    # Save to Trade History
+                    log_entry = {
+                        "Date": datetime.datetime.now().strftime("%Y-%m-%d"),
+                        "Entry Time": trade['Time'],
+                        "Exit Time": exit_time,
+                        "Type": trade['Type'],
+                        "Strike": trade['Symbol'],
+                        "Entry Spot": trade['Entry_Price'],
+                        "Exit Spot": curr_p,
+                        "PnL (Points)": live_points,
+                        "Mode": trade['Status']
+                    }
+                    st.session_state.trade_history.append(log_entry)
                     st.session_state.trade_active = False
                     st.session_state.trade_details = {}
                     st.rerun()
@@ -209,15 +251,38 @@ with st.spinner('Syncing HFT Algorithms...'):
         fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['Close'], name='Spot Price', line=dict(color='#deff9a', width=2.5)))
         if 'VWAP' in plot_df.columns: fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['VWAP'], name='VWAP (Micro)', line=dict(color='#00ffff', width=2, dash='dash')))
         fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['EMA_200'], name='200 EMA (Macro)', line=dict(color='#ffaa00', width=2)))
+        
+        # Draw Entry Line if trade is active
+        if st.session_state.trade_active:
+            fig.add_hline(y=st.session_state.trade_details['Entry_Price'], line_dash="dot", line_color="#00ff66", annotation_text="Your Entry", annotation_font_color="#00ff66")
+            
         fig.update_layout(template='plotly_dark', paper_bgcolor='#0b0e11', plot_bgcolor='#0b0e11', height=400, margin=dict(l=0,r=0,t=0,b=0), xaxis=dict(showgrid=False), yaxis=dict(gridcolor='#2d3748'))
         st.plotly_chart(fig, use_container_width=True)
         
     else:
         st.error("⚠️ Data Sync Failed.")
 
+# ==============================================================================
+# 7. TRADE BOOK & JOURNAL (THE LOGS)
+# ==============================================================================
 st.markdown("<hr style='border-color:#2d3748;'>", unsafe_allow_html=True)
-st.markdown("### 📸 AI Chart Analyzer (Paste Screenshot Here)")
-uploaded_image = st.file_uploader("Click here and press Ctrl+V to paste your chart image", type=['png', 'jpg', 'jpeg'])
-if uploaded_image is not None:
-    st.image(Image.open(uploaded_image), use_container_width=True)
-    st.info("Screenshot Accepted. Copy the prompt from v28.0 and send it to Gemini for analysis!")
+st.markdown("### 📓 TRADE BOOK & LIVE LOGS")
+
+if len(st.session_state.trade_history) > 0:
+    # Convert history to DataFrame for clean table display
+    history_df = pd.DataFrame(st.session_state.trade_history)
+    
+    # Custom styling function for PnL column
+    def color_pnl(val):
+        color = '#00ff66' if val > 0 else '#ff3333' if val < 0 else '#8b949e'
+        return f'color: {color}; font-weight: bold;'
+    
+    styled_df = history_df.style.applymap(color_pnl, subset=['PnL (Points)'])
+    st.dataframe(styled_df, use_container_width=True, hide_index=True)
+    
+    # Option to clear logs
+    if st.button("🗑️ Clear Trade Book"):
+        st.session_state.trade_history = []
+        st.rerun()
+else:
+    st.info("आज अभी तक कोई ट्रेड नहीं लिया गया है। (No trades executed today).")

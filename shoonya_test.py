@@ -13,11 +13,11 @@ import websocket  # pip install websocket-client
 # ==============================================================================
 # 1. 🔑 SHOONYA API CREDENTIALS 
 # ==============================================================================
-SHOONYA_UID = "YOUR_UID" 
+SHOONYA_UID = "FN209492" 
 SHOONYA_PWD = "YOUR_PASSWORD" 
-SHOONYA_API_KEY = "YOUR_API_KEY" 
-SHOONYA_VC = "YOUR_VENDOR_CODE" 
-SHOONYA_TOTP_SECRET = "YOUR_TOTP_SECRET" 
+SHOONYA_API_KEY = "7cf713be1c14cb0020e7012d412c5f05" 
+SHOONYA_VC = "FN209492_U" 
+SHOONYA_TOTP_SECRET = "7S4S46UM2426XWQZ5726OO6QIXD6LYNT" 
 
 # ==============================================================================
 # 2. SHOONYA LIVE LOGIN & WEBSOCKET & ORDER EXECUTION

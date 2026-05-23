@@ -20,7 +20,7 @@ SHOONYA_VC = "FN209492_U"
 SHOONYA_TOTP_SECRET = "7S4S46UM2426XWQZ5726OO6QIXD6LYNT" 
 
 # ==============================================================================
-# 2. SHOONYA LIVE LOGIN & DATA FETCH ENGINE
+# 2. SHOONYA LIVE LOGIN (WEEKEND ERROR FIXED)
 # ==============================================================================
 def shoonya_login():
     if not SHOONYA_API_KEY or SHOONYA_API_KEY == "YOUR_API_KEY": return None, "No API Key"
@@ -31,8 +31,13 @@ def shoonya_login():
         totp = pyotp.TOTP(SHOONYA_TOTP_SECRET).now()
         payload = {"apkversion": "1.0.0", "uid": SHOONYA_UID, "pwd": pwd_sha256, "factor2": totp, "vc": SHOONYA_VC, "appkey": app_key_sha256, "imei": "abc12345", "source": "API"}
         res = requests.post('https://api.shoonya.com/NorenWClientTP/QuickAuth', data='jData=' + json.dumps(payload), timeout=5)
-        if res.status_code == 502: return None, "Firewall Blocked (HTTP 502)"
-        data = res.json()
+        
+        # Safe JSON parsing to prevent weekend crash
+        try:
+            data = res.json()
+        except ValueError:
+            return None, "Broker API Maintenance (Weekend Mode)"
+            
         if data.get('stat') == 'Ok': return data.get('susertoken'), "Success"
         return None, data.get('emsg', 'Login Failed')
     except Exception as e: return None, "Broker API Offline"
@@ -43,14 +48,16 @@ def get_shoonya_ltp(token, susertoken):
         payload = {"uid": SHOONYA_UID, "exch": "NSE", "token": str(token)}
         headers = {'Authorization': f'Bearer {SHOONYA_UID} {susertoken}'}
         res = requests.post('https://api.shoonya.com/NorenWClientTP/GetQuotes', data='jData=' + json.dumps(payload), headers=headers, timeout=3)
-        if res.status_code == 200 and res.json().get('stat') == 'Ok': return float(res.json().get('lp'))
+        if res.status_code == 200:
+            data = res.json()
+            if data.get('stat') == 'Ok': return float(data.get('lp'))
         return None
     except: return None
 
 # ==============================================================================
 # 3. PAGE CONFIG & CRASH-PROOF STATE 
 # ==============================================================================
-st.set_page_config(page_title="QuantScalper AI v25.0", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="QuantScalper AI v25.1", layout="wide", initial_sidebar_state="collapsed")
 
 if 'trade_active' not in st.session_state: st.session_state.trade_active = False
 if 'trade_details' not in st.session_state: st.session_state.trade_details = {}
@@ -73,8 +80,8 @@ st.markdown("""
 # ==============================================================================
 # 4. HEADER & SMART EXECUTION BUTTONS
 # ==============================================================================
-sh_status = "<span style='color:#00ff66;'>🟢 API Linked</span>" if st.session_state.shoonya_token else f"<span style='color:#ff3333;'>🔴 API: {st.session_state.shoonya_msg} | PAPER TRADING</span>"
-st.markdown(f"<h1 style='margin:0; font-weight:800;'>QUANT<span style='color:#deff9a;'>SCALPER AI</span> v25.0 <span style='font-size:14px;'>{sh_status}</span></h1>", unsafe_allow_html=True)
+sh_status = "<span style='color:#00ff66;'>🟢 API Linked</span>" if st.session_state.shoonya_token else f"<span style='color:#ffaa00;'>🟠 API: {st.session_state.shoonya_msg} | PAPER TRADING</span>"
+st.markdown(f"<h1 style='margin:0; font-weight:800;'>QUANT<span style='color:#deff9a;'>SCALPER AI</span> v25.1 <span style='font-size:14px;'>{sh_status}</span></h1>", unsafe_allow_html=True)
 st.markdown("<hr style='border-color:#2d3748; margin: 10px 0 15px 0;'>", unsafe_allow_html=True)
 
 c1, c2, c3 = st.columns([1, 1, 3])
@@ -96,15 +103,14 @@ if st.session_state.trade_active:
             st.rerun()
 
 # ==============================================================================
-# 5. ADVANCED SMC QUANT ENGINE (MACRO + MICRO)
+# 5. ADVANCED SMC QUANT ENGINE (VWAP ZERO FIXED)
 # ==============================================================================
 @st.cache_data(ttl=30)
 def fetch_live_market_data():
     try:
         for attempt in range(3):
-            # Fetching 2 days data to calculate 200 EMA properly
-            df = yf.download('^NSEI', period='2d', interval='1m', progress=False)
-            if df is not None and not df.empty and len(df) > 200:
+            df = yf.download('^NSEI', period='3d', interval='1m', progress=False)
+            if df is not None and not df.empty and len(df) > 50:
                 if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
                 return df
             time.sleep(1)
@@ -115,45 +121,42 @@ with st.spinner('Syncing Multi-Timeframe Institutional Data...'):
     df = fetch_live_market_data()
     
     if df is not None:
-        # Calculate Core Metrics
         curr_p = round(float(df['Close'].iloc[-1]), 2)
         
         # 1. MACRO TREND (200 EMA)
         df['EMA_200'] = df['Close'].ewm(span=200, adjust=False).mean()
         macro_trend = round(float(df['EMA_200'].iloc[-1]), 2)
         
-        # 2. MICRO POC (VWAP)
-        # Calculate VWAP only for the current day
-        current_day = df.index[-1].date()
-        day_data = df[df.index.date == current_day].copy()
-        if not day_data.empty:
+        # 2. MICRO POC (VWAP - Weekend Fix)
+        # Instead of just today, calculate VWAP for the last available trading day
+        last_trading_day = df.index[-1].date()
+        day_data = df[df.index.date == last_trading_day].copy()
+        
+        if not day_data.empty and day_data['Volume'].sum() > 0:
             day_data['VWAP'] = (day_data['Close'] * day_data['Volume']).cumsum() / (day_data['Volume'].cumsum() + 1e-10)
             vwap_val = round(float(day_data['VWAP'].iloc[-1]), 2)
-            # Reassign VWAP back to main dataframe for plotting
             df.loc[day_data.index, 'VWAP'] = day_data['VWAP']
         else:
+            # Fallback if volume is 0 (like on weekends)
             vwap_val = curr_p
-            df['VWAP'] = curr_p
+            df['VWAP'] = df['Close'].ewm(span=20, adjust=False).mean() # Fallback to 20 EMA for VWAP proxy
 
         # 3. DYNAMIC STOP LOSS (ATR 14)
         high, low, close = df['High'], df['Low'], df['Close']
         tr = pd.concat([high - low, (high - close.shift(1)).abs(), (low - close.shift(1)).abs()], axis=1).max(axis=1)
         atr_val = round(float(tr.rolling(14).mean().iloc[-1]), 2)
-        safe_sl_pts = max(20.0, round(atr_val * 2.5, 1)) # Minimum 20 pts SL or 2.5x ATR
+        safe_sl_pts = max(20.0, round(atr_val * 2.5, 1))
         
-        # Live LTP Override from Shoonya
         if st.session_state.shoonya_token:
             ltp = get_shoonya_ltp('26000', st.session_state.shoonya_token)
             if ltp: curr_p = ltp
             
-        # UI Metrics Display
         m1, m2, m3, m4 = st.columns(4)
         with m1: st.metric("NIFTY SPOT", f"₹{curr_p}")
         with m2: st.metric("Micro POC (VWAP)", f"₹{vwap_val}")
         with m3: st.metric("Macro Trend (200 EMA)", f"₹{macro_trend}")
         with m4: st.metric("Safe SL Buffer (2.5x ATR)", f"{safe_sl_pts} pts")
         
-        # 4. MULTI-TIMEFRAME LOGIC DETECTOR
         st.markdown("<br>", unsafe_allow_html=True)
         if curr_p > macro_trend and curr_p > vwap_val: bias, color = "STRONG BULLISH (Only Look for CE Pullbacks)", "#00ff66"
         elif curr_p < macro_trend and curr_p < vwap_val: bias, color = "STRONG BEARISH (Only Look for PE Pullbacks)", "#ff3333"
@@ -163,7 +166,7 @@ with st.spinner('Syncing Multi-Timeframe Institutional Data...'):
         st.markdown(f"<div class='metric-box'><b>AI Master Bias:</b> <span style='color:{color}; font-size:18px;'>{bias}</span></div>", unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # Plotly Chart (Showing only the last 3 hours for scalping clarity)
+        # Plotly Chart
         plot_df = df.tail(180) 
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['Close'], name='Spot Price', line=dict(color='#deff9a', width=2.5)))

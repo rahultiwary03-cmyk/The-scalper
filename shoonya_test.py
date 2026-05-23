@@ -13,6 +13,7 @@ import websocket  # pip install websocket-client
 # ==============================================================================
 # 1. 🔑 SHOONYA API CREDENTIALS 
 # ==============================================================================
+# अपनी असली Keys यहाँ डालें
 SHOONYA_UID = "FN209492" 
 SHOONYA_PWD = "YOUR_PASSWORD" 
 SHOONYA_API_KEY = "7cf713be1c14cb0020e7012d412c5f05" 
@@ -20,7 +21,7 @@ SHOONYA_VC = "FN209492_U"
 SHOONYA_TOTP_SECRET = "7S4S46UM2426XWQZ5726OO6QIXD6LYNT" 
 
 # ==============================================================================
-# 2. SHOONYA LIVE LOGIN & WEBSOCKET & ORDER EXECUTION
+# 2. SHOONYA LIVE LOGIN & WEBSOCKET ENGINE
 # ==============================================================================
 def shoonya_login():
     if not SHOONYA_API_KEY or SHOONYA_API_KEY == "YOUR_API_KEY": return None, "No API Key"
@@ -43,7 +44,7 @@ def place_shoonya_order(susertoken, trading_symbol, qty=25, buy_sell='B'):
         payload = {
             "uid": SHOONYA_UID, "actid": SHOONYA_UID, "exch": "NFO", 
             "tsym": trading_symbol, "qty": str(qty), "prc": "0", 
-            "prd": "M", 
+            "prd": "M", # 'M' for NRML, 'I' for MIS
             "trantype": buy_sell, "prctyp": "MKT", "ret": "DAY"
         }
         headers = {'Authorization': f'Bearer {SHOONYA_UID} {susertoken}'}
@@ -64,20 +65,21 @@ def on_open(ws):
     st.session_state.ws_status = "Connected Live ⚡"
     auth_payload = {"t": "c", "uid": SHOONYA_UID, "actid": SHOONYA_UID, "source": "API", "susertoken": st.session_state.shoonya_token}
     ws.send(json.dumps(auth_payload))
-    sub_payload = {"t": "t", "k": "NSE|26000"} 
+    sub_payload = {"t": "t", "k": "NSE|26000"} # Subscribe Nifty Spot (Token: 26000)
     ws.send(json.dumps(sub_payload))
 
 def start_shoonya_websocket():
+    if not st.session_state.shoonya_token: return
     websocket.enableTrace(False)
     ws = websocket.WebSocketApp("wss://api.shoonya.com/NorenWSTP/", on_open=on_open, on_message=on_message, on_error=on_error, on_close=on_close)
     wst = threading.Thread(target=ws.run_forever)
     wst.daemon = True
     wst.start()
 
-# ==============================================================================
+# ================= =============================================================
 # 3. PAGE CONFIG & PERSISTENT STATE 
 # ==============================================================================
-st.set_page_config(page_title="QuantScalper AI v35.0 [ULTIMATE]", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="QuantScalper AI v35.1 [MASTER]", layout="wide", initial_sidebar_state="collapsed")
 
 if 'live_ltp' not in st.session_state: st.session_state.live_ltp = 0.0
 if 'ws_status' not in st.session_state: st.session_state.ws_status = "Initializing..."
@@ -113,9 +115,9 @@ pnl_color = "#00ff66" if net_pnl >= 0 else "#ff3333"
 col_h1, col_h2 = st.columns([2, 1])
 with col_h1: 
     ws_badge = f"<span style='color:#00ffff; font-size:14px;'>📡 {st.session_state.ws_status}</span>"
-    st.markdown(f"<h1 style='margin:0; font-weight:800;'>QUANT<span style='color:#deff9a;'>SCALPER AI</span> v35.0 {ws_badge}</h1>", unsafe_allow_html=True)
+    st.markdown(f"<h1 style='margin:0; font-weight:800;'>QUANT<span style='color:#deff9a;'>SCALPER AI</span> v35.1 {ws_badge}</h1>", unsafe_allow_html=True)
 with col_h2: 
-    st.markdown(f"<div style='text-align:right; font-size:18px; font-weight:bold;'>Total Trades: {total_trades} | Day PnL: <span style='color:{pnl_color};'>{net_pnl} pts</span></div>", unsafe_allow_html=True)
+    st.markdown(f"<div style='text-align:right; font-size:18px; font-weight:bold;'>Trades: {total_trades} | Day PnL: <span style='color:{pnl_color};'>{net_pnl} pts</span></div>", unsafe_allow_html=True)
 
 st.markdown("<hr style='border-color:#2d3748; margin: 5px 0 15px 0;'>", unsafe_allow_html=True)
 
@@ -127,7 +129,7 @@ def get_lot_size(index_name):
 c_opt1, c_opt2, c_opt3, c_opt4 = st.columns(4)
 with c_opt1: expiry_date = st.text_input("Nifty Expiry", value="30MAY24")
 with c_opt2: index_choice = st.selectbox("Index", ["NIFTY 50", "BANKNIFTY"])
-with c_opt3: trade_qty = st.number_input(f"Qty (Auto Lot: {get_lot_size(index_choice)})", min_value=get_lot_size(index_choice), step=get_lot_size(index_choice), value=get_lot_size(index_choice))
+with c_opt3: trade_qty = st.number_input(f"Qty (Lot: {get_lot_size(index_choice)})", min_value=get_lot_size(index_choice), step=get_lot_size(index_choice), value=get_lot_size(index_choice))
 with c_opt4: live_mode = st.toggle("🔴 ENABLE LIVE TRADING", value=False)
 
 # ==============================================================================
@@ -144,21 +146,25 @@ with st.spinner('Syncing Macro Trend...'):
     yfinance_curr_p = 23750.0
 
     if df is not None and not df.empty:
-        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-        yfinance_curr_p = round(float(df['Close'].iloc[-1]), 2)
-        df['EMA_200'] = df['Close'].ewm(span=200, adjust=False).mean()
-        macro_trend = round(float(df['EMA_200'].iloc[-1]), 2)
-        
-        last_day = df.index[-1].date()
-        day_data = df[df.index.date == last_day].copy()
-        if not day_data.empty and day_data['Volume'].sum() > 0:
-            day_data['VWAP'] = (day_data['Close'] * day_data['Volume']).cumsum() / (day_data['Volume'].cumsum() + 1e-10)
-            vwap_val = round(float(day_data['VWAP'].iloc[-1]), 2)
-            df.loc[day_data.index, 'VWAP'] = day_data['VWAP']
-        else: vwap_val = yfinance_curr_p; df['VWAP'] = df['Close'].ewm(span=20, adjust=False).mean()
+        # Weekend Error handling for 'Open' KeyError
+        try:
+            if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+            yfinance_curr_p = round(float(df['Close'].iloc[-1]), 2)
+            df['EMA_200'] = df['Close'].ewm(span=200, adjust=False).mean()
+            macro_trend = round(float(df['EMA_200'].iloc[-1]), 2)
+            
+            last_day = df.index[-1].date()
+            day_data = df[df.index.date == last_day].copy()
+            if not day_data.empty and day_data['Volume'].sum() > 0:
+                day_data['VWAP'] = (day_data['Close'] * day_data['Volume']).cumsum() / (day_data['Volume'].cumsum() + 1e-10)
+                vwap_val = round(float(day_data['VWAP'].iloc[-1]), 2)
+                df.loc[day_data.index, 'VWAP'] = day_data['VWAP']
+            else: vwap_val = yfinance_curr_p; df['VWAP'] = df['Close'].ewm(span=20, adjust=False).mean()
 
-        tr = pd.concat([df['High'] - df['Low'], (df['High'] - df['Close'].shift(1)).abs(), (df['Low'] - df['Close'].shift(1)).abs()], axis=1).max(axis=1)
-        safe_sl_pts = max(20.0, round(float(tr.rolling(14).mean().iloc[-1]) * 2.5, 1))
+            tr = pd.concat([df['High'] - df['Low'], (df['High'] - df['Close'].shift(1)).abs(), (df['Low'] - df['Close'].shift(1)).abs()], axis=1).max(axis=1)
+            safe_sl_pts = max(20.0, round(float(tr.rolling(14).mean().iloc[-1]) * 2.5, 1))
+        except:
+            st.error("⚠️ Data Sync Issue (Weekend Mode). Wait for Monday market.")
 
     # WebSocket 0-Latency Price Engine
     curr_p = st.session_state.live_ltp if st.session_state.live_ltp > 0 else yfinance_curr_p
@@ -169,7 +175,7 @@ with st.spinner('Syncing Macro Trend...'):
     with m3: st.metric("Macro Trend (200 EMA)", f"₹{macro_trend}")
     with m4: st.metric("Dynamic SL Buffer", f"{safe_sl_pts} pts")
 
-    # Trend Bias Alignment
+    # Trend Bias Alignment (The Trading Logic)
     if curr_p > macro_trend and curr_p > vwap_val: bias, color, can_trade = "STRONG BULLISH", "#00ff66", True
     elif curr_p < macro_trend and curr_p < vwap_val: bias, color, can_trade = "STRONG BEARISH", "#ff3333", True
     else: bias, color, can_trade = "CHOPPY (WAIT)", "#ffaa00", False
@@ -179,52 +185,79 @@ with st.spinner('Syncing Macro Trend...'):
     # ------------------------------------------------------------------------------
     # 6. EXECUTION & LIVE PNL MONITORING
     # ------------------------------------------------------------------------------
-    atm_strike = int(round(curr_p / 50) * 50)
-    ce_symbol = f"NIFTY{expiry_date}C{atm_strike}"
-    pe_symbol = f"NIFTY{expiry_date}P{atm_strike}"
+    # Auto ATM Strike Calculation (Nifty is 50 pts)
+    index_factor = 100 if "BANK" in index_choice else 50
+    atm_strike = int(round(curr_p / index_factor) * index_factor)
+    ce_symbol = f"{index_choice[:5]}{expiry_date}C{atm_strike}" # Symbol builder
+    pe_symbol = f"{index_choice[:5]}{expiry_date}P{atm_strike}"
 
-    def calculate_trailing_sl(entry, current, pnl_points, trade_type):
-        if pnl_points >= 10: return entry # Cost-to-cost if 10 pts profit
-        if trade_type == 'CE': return entry - safe_sl_pts
-        else: return entry + safe_sl_pts
+    def calculate_trailing_sl(entry,current, pnl_points, trade_type, sl_buffer):
+        if pnl_points >= 10: return entry # Move to Cost-to-cost if 10 pts profit
+        if trade_type == 'CE': return entry - sl_buffer
+        else: return entry + sl_buffer
 
     c1, c2, c3 = st.columns([1, 1, 3])
     with c1:
+        # CE Button is disabled if trend not aligned or already in a trade
         if st.button(f"🟢 BUY CE ({atm_strike})", disabled=not can_trade or st.session_state.trade_active, use_container_width=True):
+            current_time = datetime.datetime.now().strftime("%H:%M:%S")
             if live_mode and st.session_state.shoonya_token:
                 succ, msg = place_shoonya_order(st.session_state.shoonya_token, ce_symbol, trade_qty, 'B')
-                if succ: st.session_state.trade_active = True; st.session_state.trade_details = {'Type':'CE', 'Sym':ce_symbol, 'Qty':trade_qty, 'Status':'LIVE', 'Entry':curr_p, 'Time':datetime.datetime.now().strftime("%H:%M:%S")}
+                if succ: 
+                    st.session_state.trade_active = True
+                    st.session_state.trade_details = {'Type':'CE', 'Sym':ce_symbol, 'Qty':trade_qty, 'Status':'LIVE', 'Entry':curr_p, 'Time':current_time}
+                else: st.error(f"LIVE Order Failed: {msg}")
             else:
-                st.session_state.trade_active = True; st.session_state.trade_details = {'Type':'CE', 'Sym':ce_symbol, 'Qty':trade_qty, 'Status':'PAPER', 'Entry':curr_p, 'Time':datetime.datetime.now().strftime("%H:%M:%S")}
+                st.session_state.trade_active = True
+                st.session_state.trade_details = {'Type':'CE', 'Sym':ce_symbol, 'Qty':trade_qty, 'Status':'PAPER', 'Entry':curr_p, 'Time':current_time}
             st.rerun()
 
     with c2:
+        # PE Button logic
         if st.button(f"🔴 BUY PE ({atm_strike})", disabled=not can_trade or st.session_state.trade_active, use_container_width=True):
+            current_time = datetime.datetime.now().strftime("%H:%M:%S")
             if live_mode and st.session_state.shoonya_token:
                 succ, msg = place_shoonya_order(st.session_state.shoonya_token, pe_symbol, trade_qty, 'B')
-                if succ: st.session_state.trade_active = True; st.session_state.trade_details = {'Type':'PE', 'Sym':pe_symbol, 'Qty':trade_qty, 'Status':'LIVE', 'Entry':curr_p, 'Time':datetime.datetime.now().strftime("%H:%M:%S")}
+                if succ: 
+                    st.session_state.trade_active = True
+                    st.session_state.trade_details = {'Type':'PE', 'Sym':pe_symbol, 'Qty':trade_qty, 'Status':'LIVE', 'Entry':curr_p, 'Time':current_time}
+                else: st.error(f"LIVE Order Failed: {msg}")
             else:
-                st.session_state.trade_active = True; st.session_state.trade_details = {'Type':'PE', 'Sym':pe_symbol, 'Qty':trade_qty, 'Status':'PAPER', 'Entry':curr_p, 'Time':datetime.datetime.now().strftime("%H:%M:%S")}
+                st.session_state.trade_active = True
+                st.session_state.trade_details = {'Type':'PE', 'Sym':pe_symbol, 'Qty':trade_qty, 'Status':'PAPER', 'Entry':curr_p, 'Time':current_time}
             st.rerun()
 
     if st.session_state.trade_active:
         with c3:
             t = st.session_state.trade_details
+            # Live PnL calculation based on Spot price
             live_points = round(curr_p - t['Entry'], 2) if t['Type'] == 'CE' else round(t['Entry'] - curr_p, 2)
-            trail_sl = calculate_trailing_sl(t['Entry'], curr_p, live_points, t['Type'])
+            trail_sl = calculate_trailing_sl(t['Entry'], curr_p, live_points, t['Type'], safe_sl_pts)
             pcol = "#00ff66" if live_points >= 0 else "#ff3333"
+            status_color = "#00ffff" if t['Status'] == 'LIVE' else "#ffaa00"
             
             st.markdown(f"""
-            <div class='live-pnl-box'>
+            <div class='live-pnl-box' style='border-left-color: {status_color};'>
                 <div style='display:flex; justify-content:space-between;'>
-                    <div><b>{t['Status']} {t['Type']}</b> | {t['Sym']} <br> <span style='color:#8b949e;'>Entry: ₹{t['Entry']} | Trail SL: ₹{trail_sl}</span></div>
-                    <div style='text-align:right;'><span style='color:#8b949e;'>Live PnL</span><br><b style='color:{pcol}; font-size:22px;'>{'+' if live_points>0 else ''}{live_points} pts</b></div>
+                    <div><b style='color:{status_color};'>● {t['Status']}</b> {t['Type']} | {t['Sym']} <br> <span style='color:#8b949e;'>Entry Spot: ₹{t['Entry']} | Trail SL: ₹{trail_sl}</span></div>
+                    <div style='text-align:right;'><span style='color:#8b949e;'>Live Spot PnL</span><br><b style='color:{pcol}; font-size:24px;'>{'+' if live_points>0 else ''}{live_points} pts</b></div>
                 </div>
             </div>""", unsafe_allow_html=True)
             
-            if st.button("⏹️ SQUARE-OFF & SAVE LOG", use_container_width=True):
-                if t['Status'] == 'LIVE' and st.session_state.shoonya_token: place_shoonya_order(st.session_state.shoonya_token, t['Sym'], t['Qty'], 'S')
-                st.session_state.trade_history.append({"Time": t['Time'], "Type": t['Type'], "Strike": t['Sym'], "Entry": t['Entry'], "Exit": curr_p, "PnL (Points)": live_points})
+            if st.button("⏹️ SQUARE-OFF POSITION", use_container_width=True):
+                if t['Status'] == 'LIVE' and st.session_state.shoonya_token:
+                    # Place Sell order for LIVE trade
+                    place_shoonya_order(st.session_state.shoonya_token, t['Sym'], t['Qty'], 'S')
+                
+                # Save trade log
+                exit_time = datetime.datetime.now().strftime("%H:%M:%S")
+                st.session_state.trade_history.append({
+                    "Date": datetime.datetime.now().strftime("%Y-%m-%d"),
+                    "Entry Time": t['Time'], "Exit Time": exit_time,
+                    "Type": t['Type'], "Symbol": t['Sym'], 
+                    "Entry Spot": t['Entry'], "Exit Spot": curr_p, 
+                    "PnL (Points)": live_points, "Mode": t['Status']
+                })
                 st.session_state.trade_active = False; st.session_state.trade_details = {}
                 st.rerun()
 
@@ -232,23 +265,42 @@ with st.spinner('Syncing Macro Trend...'):
     # 7. CHART & TRADE BOOK
     # ------------------------------------------------------------------------------
     if df is not None and not df.empty:
-        plot_df = df.tail(180) 
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['Close'], name='Spot Price', line=dict(color='#deff9a', width=2.5)))
-        if 'VWAP' in plot_df.columns: fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['VWAP'], name='VWAP', line=dict(color='#00ffff', width=2, dash='dash')))
-        fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['EMA_200'], name='200 EMA', line=dict(color='#ffaa00', width=2)))
-        if st.session_state.trade_active: fig.add_hline(y=st.session_state.trade_details['Entry'], line_dash="dot", line_color="#00ff66", annotation_text="Entry")
-        fig.update_layout(template='plotly_dark', paper_bgcolor='#0b0e11', plot_bgcolor='#0b0e11', height=350, margin=dict(l=0,r=0,t=0,b=0), xaxis=dict(showgrid=False), yaxis=dict(gridcolor='#2d3748'))
-        st.plotly_chart(fig, use_container_width=True)
+        try:
+            plot_df = df.tail(180) 
+            fig = go.Figure()
+            # Candlestick chart for professional view
+            fig.add_trace(go.Candlestick(x=plot_df.index, open=plot_df['Open'], high=plot_df['High'], low=plot_df['Low'], close=plot_df['Close'], name='Market'))
+            if 'VWAP' in plot_df.columns: fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['VWAP'], name='VWAP (POC)', line=dict(color='#00ffff', width=1.5, dash='dash')))
+            fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['EMA_200'], name='200 EMA (Macro)', line=dict(color='#ffaa00', width=1.5)))
+            
+            # Entry Line on Chart
+            if st.session_state.trade_active: 
+                fig.add_hline(y=st.session_state.trade_details['Entry'], line_dash="dot", line_color="#00ff66", annotation_text="Entry")
+                
+            fig.update_layout(template='plotly_dark', paper_bgcolor='#0b0e11', plot_bgcolor='#0b0e11', height=400, margin=dict(l=0,r=0,t=0,b=0), xaxis=dict(showgrid=False), yaxis=dict(gridcolor='#2d3748'))
+            st.plotly_chart(fig, use_container_width=True)
+        except: pass
 
 st.markdown("<hr style='border-color:#2d3748;'>", unsafe_allow_html=True)
 c_log1, c_log2 = st.columns([3, 1])
-with c_log1: st.markdown("### 📓 LIVE TRADE BOOK")
+with c_log1: st.markdown("### 📓 DAILY TRADE BOOK")
 with c_log2: 
-    if st.button("🔄 Sync WebSocket Price"): st.rerun()
+    # Manual refresh button because Streamlit doesn't auto-update live data in UI
+    if st.button("🔄 Sync Live Market & UI"): st.rerun()
 
 if len(st.session_state.trade_history) > 0:
     history_df = pd.DataFrame(st.session_state.trade_history)
-    st.dataframe(history_df.style.applymap(lambda v: 'color: #00ff66;' if v > 0 else 'color: #ff3333;' if v < 0 else '', subset=['PnL (Points)']), use_container_width=True, hide_index=True)
+    
+    # Custom styling for Trade Book (Green for profit, Red for loss)
+    def style_pnl(val):
+        color = '#00ff66' if val > 0 else '#ff3333' if val < 0 else '#8b949e'
+        return f'color: {color}; font-weight: bold;'
+        
+    st.dataframe(history_df.style.applymap(style_pnl, subset=['PnL (Points)']), use_container_width=True, hide_index=True)
+    
+    if st.button("🗑️ Clear Trade Book"):
+        st.session_state.trade_history = []
+        st.session_state.daily_pnl = 0
+        st.rerun()
 else:
-    st.info("No trades executed yet.")
+    st.info("No trades executed yet today.")

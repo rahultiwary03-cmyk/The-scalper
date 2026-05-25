@@ -17,8 +17,7 @@ SHOONYA_UID = "FN209492"
 SHOONYA_PWD = "Rahul@1995" 
 SHOONYA_API_KEY = "7cf713be1c14cb0020e7012d412c5f05" 
 SHOONYA_VC = "FN209492_U" 
-SHOONYA_TOTP_SECRET = "7S4S46UM2426XWQZ5726OO6QIXD6LYNT" 
-
+SHOONYA_TOTP_SECRET = "7S4S46UM2426XWQZ5726OO6QIXD6LYNT"
 # ==============================================================================
 # 2. ASSET CONFIGURATION & STATE INIT
 # ==============================================================================
@@ -29,7 +28,8 @@ ASSET_MAP = {
     "BITCOIN (Crypto)": {"ticker": "BTC-USD", "lot": 1, "exch": "CRYPTO", "ws_token": None} 
 }
 
-st.set_page_config(page_title="QuantScalper AI v42.0", layout="wide", initial_sidebar_state="collapsed")
+# Force Dark Mode via Page Config styling
+st.set_page_config(page_title="QuantScalper AI v42.1", layout="wide", initial_sidebar_state="collapsed")
 
 if 'ws_ltp' not in st.session_state: st.session_state.ws_ltp = 0.0
 if 'ws_status' not in st.session_state: st.session_state.ws_status = "Waiting for API..."
@@ -82,16 +82,19 @@ if 'shoonya_token' not in st.session_state:
     start_shoonya_websocket()
 
 # ==============================================================================
-# 4. CUSTOM STYLING (FIXED FONT & VISIBILITY)
+# 4. CUSTOM STYLING (HEDGE FUND DARK THEME)
 # ==============================================================================
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
-    * { font-family: 'Inter', sans-serif; }
-    .metric-box { background: rgba(30, 34, 45, 0.8); padding: 15px; border-radius: 10px; border: 1px solid #333; color: white; box-shadow: 0 4px 6px rgba(0,0,0,0.3);}
-    .live-pnl-box { background: rgba(20, 25, 35, 0.9); border: 2px solid #00ffff; padding: 20px; border-radius: 10px; margin-top: 10px; color: white;}
-    .performance-bar { background: linear-gradient(90deg, #1e222d 0%, #2a2e39 100%); padding: 15px; border-radius: 8px; margin-bottom: 15px; color:#fff; display:flex; justify-content:space-around; align-items:center; border: 1px solid #444;}
-    .live-price-text { font-size: 42px; font-weight: 900; color: #00ffff; text-align: center; margin: 5px 0; text-shadow: 0px 0px 10px rgba(0,255,255,0.3); }
+    html, body, [class*="css"] { font-family: 'Inter', sans-serif; background-color: #0b0e11 !important; color: #e3e9f0 !important; }
+    .stApp { background-color: #0b0e11 !important; }
+    .metric-box { background: #151a22; padding: 15px; border-radius: 10px; border: 1px solid #2d3748; color: #e3e9f0; box-shadow: 0 4px 6px rgba(0,0,0,0.3);}
+    .live-pnl-box { background: rgba(0, 255, 255, 0.05); border: 2px solid #00ffff; padding: 20px; border-radius: 10px; margin-top: 10px; color: white;}
+    .performance-bar { background: linear-gradient(90deg, #151a22 0%, #1e2532 100%); padding: 15px; border-radius: 8px; margin-bottom: 15px; color:#fff; display:flex; justify-content:space-around; align-items:center; border: 1px solid #2d3748;}
+    .live-price-text { font-size: 42px; font-weight: 900; color: #00ffff; text-align: center; margin: 5px 0; text-shadow: 0px 0px 10px rgba(0,255,255,0.2); }
+    /* Fix for native Streamlit widgets in dark mode */
+    .stSelectbox > div > div, .stNumberInput > div > div, .stTextInput > div > div { background-color: #1a202c !important; color: white !important; border: 1px solid #2d3748 !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -106,8 +109,8 @@ net_pnl = sum([t['PnL'] for t in history]) if total_trades > 0 else 0
 
 st.markdown(f"""
     <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom: 10px;'>
-        <h1 style='margin:0; font-weight: 800;'>QUANT<span style='color:#deff9a;'>SCALPER AI</span> v42.0</h1>
-        <div style='background:#1e222d; padding:8px 15px; border-radius:20px; font-weight:bold; color: white; border: 1px solid #444;'>📡 API Status: {st.session_state.ws_status}</div>
+        <h1 style='margin:0; font-weight: 800; color:#e3e9f0;'>QUANT<span style='color:#deff9a;'>SCALPER AI</span> v42.1</h1>
+        <div style='background:#1a202c; padding:8px 15px; border-radius:20px; font-weight:bold; color: #e3e9f0; border: 1px solid #2d3748;'>📡 API Status: {st.session_state.ws_status}</div>
     </div>
     <div class='performance-bar'>
         <div style='font-size:18px;'><b>WIN RATE:</b> <span style='color:{"#00ff66" if win_rate>=50 else "#ff3333"};'>{win_rate}%</span></div>
@@ -138,7 +141,7 @@ with c_opt4:
     auto_refresh = st.toggle("🔄 Auto-Tick Engine", value=False)
 
 # ==============================================================================
-# 7. UNIVERSAL DATA ENGINE (MTF & SMC FIX)
+# 7. UNIVERSAL DATA ENGINE (MTF & SMC)
 # ==============================================================================
 @st.cache_data(ttl=60)
 def fetch_omni_data(ticker):
@@ -147,7 +150,7 @@ def fetch_omni_data(ticker):
         df_1h = yf.download(ticker, period='1mo', interval='1h', progress=False)
         df_1d = yf.download(ticker, period='3mo', interval='1d', progress=False)
         
-        # ⚠️ FIX: Remove Timezones to fix Plotly chart gaps!
+        # Strip timezones
         for df in [df_1m, df_1h, df_1d]:
             if df is not None and not df.empty:
                 if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
@@ -203,7 +206,7 @@ bias_1d = "🟩 Bullish" if df_1d is not None and curr_p > df_1d['Close'].ewm(sp
 bias_1h = "🟩 Bullish" if df_1h is not None and curr_p > df_1h['Close'].ewm(span=50).mean().iloc[-1] else "🟥 Bearish"
 bias_1m = "🟩 Bullish" if curr_p > vwap_val else "🟥 Bearish"
 
-st.markdown(f"<div style='text-align:center; padding:10px; background:#1e222d; color:white; border-radius:5px; border:1px solid #444; margin-bottom:15px;'><b>MTF CONFLUENCE:</b> 1D [{bias_1d}] &nbsp;|&nbsp; 1H [{bias_1h}] &nbsp;|&nbsp; 1m [{bias_1m}]</div>", unsafe_allow_html=True)
+st.markdown(f"<div style='text-align:center; padding:10px; background:#1e2532; color:#e3e9f0; border-radius:5px; border:1px solid #2d3748; margin-bottom:15px;'><b>MTF CONFLUENCE:</b> 1D [{bias_1d}] &nbsp;|&nbsp; 1H [{bias_1h}] &nbsp;|&nbsp; 1m [{bias_1m}]</div>", unsafe_allow_html=True)
 
 rationale = []
 can_ce, can_pe = False, False
@@ -256,36 +259,44 @@ if st.session_state.trade_active:
         st.rerun()
 
 # ==============================================================================
-# 10. VISUAL CHART FIX (100% NO GAPS)
+# 10. VISUAL CHART FIX (MAGIC CATEGORY AXIS - NO GAPS EVER)
 # ==============================================================================
 st.markdown("### 📊 SMC Master Chart")
 if df_1m is not None and not df_1m.empty:
     try:
-        plot_df = df_1m.tail(150) 
+        plot_df = df_1m.tail(150).copy()
+        # 🔥 MAGIC FIX: Convert DateTime to exact strings so Plotly treats them as sequential categories (Zero Gaps)
+        plot_df['Time_Str'] = plot_df.index.strftime('%H:%M | %d-%b')
+        
         fig = go.Figure()
-        fig.add_trace(go.Candlestick(x=plot_df.index, open=plot_df['Open'], high=plot_df['High'], low=plot_df['Low'], close=plot_df['Close'], name='Market'))
-        if 'VWAP' in plot_df.columns: fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['VWAP'], name='VWAP', line=dict(color='#00ffff', width=1.5, dash='dash')))
-        fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['EMA_200'], name='200 EMA', line=dict(color='#ffaa00', width=1.5)))
+        fig.add_trace(go.Candlestick(x=plot_df['Time_Str'], open=plot_df['Open'], high=plot_df['High'], low=plot_df['Low'], close=plot_df['Close'], name='Market'))
         
-        for fvg in fvg_list:
-            c = "rgba(255, 51, 51, 0.2)" if fvg['type'] == "BEARISH" else "rgba(0, 255, 102, 0.2)"
-            fig.add_hrect(y0=fvg['bot'], y1=fvg['top'], fillcolor=c, opacity=0.4, line_width=0, annotation_text=f"{fvg['type']} FVG")
+        if 'VWAP' in plot_df.columns: fig.add_trace(go.Scatter(x=plot_df['Time_Str'], y=plot_df['VWAP'], name='VWAP', line=dict(color='#00ffff', width=1.5, dash='dash')))
+        fig.add_trace(go.Scatter(x=plot_df['Time_Str'], y=plot_df['EMA_200'], name='200 EMA', line=dict(color='#ffaa00', width=1.5)))
         
+        # Horizontal lines (PDH/PDL) span the whole chart
         fig.add_hline(y=pdh, line_dash="dot", line_color="#ff3333", annotation_text="PDH Liquidity")
         fig.add_hline(y=pdl, line_dash="dot", line_color="#00ff66", annotation_text="PDL Liquidity")
+        
         if st.session_state.trade_active: fig.add_hline(y=st.session_state.trade_details['Entry'], line_dash="solid", line_color="#00ffff", annotation_text="ENTRY")
         
-        # 🔥 MAGIC FIX: Rangebreaks to skip nights and weekends seamlessly
-        fig.update_xaxes(rangebreaks=[dict(bounds=["15:30", "09:15"]), dict(bounds=["sat", "mon"])])
-        
-        fig.update_layout(template="plotly_dark", height=550, margin=dict(l=0,r=0,t=0,b=0), xaxis=dict(showgrid=False), yaxis=dict(gridcolor="#333"), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+        fig.update_layout(
+            template="plotly_dark", 
+            height=550, 
+            margin=dict(l=0,r=0,t=0,b=0), 
+            xaxis=dict(showgrid=False, type='category', categoryorder='category ascending', nticks=10), # Category Axis ignores time gaps!
+            yaxis=dict(gridcolor="#2d3748"), 
+            paper_bgcolor="#0b0e11", 
+            plot_bgcolor="#0b0e11"
+        )
         st.plotly_chart(fig, use_container_width=True, theme=None)
-    except: pass
+    except Exception as e: 
+        st.error(f"Chart Render Error: {e}")
 
 # ==============================================================================
 # 11. TRADE BOOK (COLORFUL EXITS/ENTRIES)
 # ==============================================================================
-st.markdown("<hr style='border-color:#444;'>", unsafe_allow_html=True)
+st.markdown("<hr style='border-color:#2d3748;'>", unsafe_allow_html=True)
 if len(st.session_state.trade_history) > 0:
     history_df = pd.DataFrame(st.session_state.trade_history)
     

@@ -11,7 +11,7 @@ import threading
 import websocket  
 
 # ==============================================================================
-# 1. 🔑 SHOONYA API CREDENTIALS (यहाँ अपनी असली डिटेल्स डालें)
+# 1. 🔑 SHOONYA API CREDENTIALS 
 # ==============================================================================
 SHOONYA_UID = "FN209492" 
 SHOONYA_PWD = "Rahul@1995" 
@@ -29,7 +29,7 @@ ASSET_MAP = {
     "BITCOIN (Crypto)": {"ticker": "BTC-USD", "lot": 1, "exch": "CRYPTO", "ws_token": None} 
 }
 
-st.set_page_config(page_title="QuantScalper AI v41.3", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="QuantScalper AI v42.0", layout="wide", initial_sidebar_state="collapsed")
 
 if 'ws_ltp' not in st.session_state: st.session_state.ws_ltp = 0.0
 if 'ws_status' not in st.session_state: st.session_state.ws_status = "Waiting for API..."
@@ -37,7 +37,6 @@ if 'trade_history' not in st.session_state: st.session_state.trade_history = []
 if 'trade_active' not in st.session_state: st.session_state.trade_active = False
 if 'trade_details' not in st.session_state: st.session_state.trade_details = {}
 if 'prev_asset' not in st.session_state: st.session_state.prev_asset = "NIFTY 50"
-if 'theme' not in st.session_state: st.session_state.theme = "Dark"
 
 # ==============================================================================
 # 3. SHOONYA CONNECTION ENGINE
@@ -83,28 +82,16 @@ if 'shoonya_token' not in st.session_state:
     start_shoonya_websocket()
 
 # ==============================================================================
-# 4. DYNAMIC THEME ENGINE
+# 4. CUSTOM STYLING (FIXED FONT & VISIBILITY)
 # ==============================================================================
-col_thm1, col_thm2 = st.columns([8, 1])
-with col_thm2:
-    if st.button("🌓 Toggle Theme"): st.session_state.theme = "Light" if st.session_state.theme == "Dark" else "Dark"; st.rerun()
-
-if st.session_state.theme == "Dark":
-    bg_color, text_color, box_bg, border_col = "#0b0e11", "#e3e9f0", "rgba(20, 24, 31, 0.7)", "#2d3748"
-    chart_template = "plotly_dark"
-else:
-    bg_color, text_color, box_bg, border_col = "#f4f6f9", "#1a202c", "#ffffff", "#cbd5e1"
-    chart_template = "plotly_white"
-
-st.markdown(f"""
+st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
-    html, body, [class*="css"]  {{ font-family: 'Inter', sans-serif; background-color: {bg_color}; color: {text_color}; transition: all 0.3s;}}
-    .stApp {{ background-color: {bg_color}; }}
-    .metric-box {{ background: {box_bg}; padding: 15px; border-radius: 10px; border: 1px solid {border_col}; box-shadow: 0 4px 6px rgba(0,0,0,0.1);}}
-    .live-pnl-box {{ background: rgba(0, 255, 255, 0.1); border: 2px solid #00ffff; padding: 20px; border-radius: 10px; margin-top: 10px; }}
-    .performance-bar {{ background: linear-gradient(90deg, #14181f 0%, #2d3748 100%); padding: 10px; border-radius: 8px; margin-bottom: 15px; color:#fff; display:flex; justify-content:space-around; align-items:center;}}
-    .live-price-text {{ font-size: 38px; font-weight: 900; color: #00ffff; text-align: center; margin: 10px 0; }}
+    * { font-family: 'Inter', sans-serif; }
+    .metric-box { background: rgba(30, 34, 45, 0.8); padding: 15px; border-radius: 10px; border: 1px solid #333; color: white; box-shadow: 0 4px 6px rgba(0,0,0,0.3);}
+    .live-pnl-box { background: rgba(20, 25, 35, 0.9); border: 2px solid #00ffff; padding: 20px; border-radius: 10px; margin-top: 10px; color: white;}
+    .performance-bar { background: linear-gradient(90deg, #1e222d 0%, #2a2e39 100%); padding: 15px; border-radius: 8px; margin-bottom: 15px; color:#fff; display:flex; justify-content:space-around; align-items:center; border: 1px solid #444;}
+    .live-price-text { font-size: 42px; font-weight: 900; color: #00ffff; text-align: center; margin: 5px 0; text-shadow: 0px 0px 10px rgba(0,255,255,0.3); }
     </style>
     """, unsafe_allow_html=True)
 
@@ -118,14 +105,14 @@ win_rate = round((wins / total_trades) * 100, 1) if total_trades > 0 else 0.0
 net_pnl = sum([t['PnL'] for t in history]) if total_trades > 0 else 0
 
 st.markdown(f"""
-    <div style='display:flex; justify-content:space-between; align-items:center;'>
-        <h1 style='margin:0;'>QUANT<span style='color:#deff9a;'>SCALPER AI</span> v41.3</h1>
-        <div style='background:#2d3748; padding:5px 15px; border-radius:20px; font-weight:bold;'>📡 API Status: {st.session_state.ws_status}</div>
+    <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom: 10px;'>
+        <h1 style='margin:0; font-weight: 800;'>QUANT<span style='color:#deff9a;'>SCALPER AI</span> v42.0</h1>
+        <div style='background:#1e222d; padding:8px 15px; border-radius:20px; font-weight:bold; color: white; border: 1px solid #444;'>📡 API Status: {st.session_state.ws_status}</div>
     </div>
     <div class='performance-bar'>
         <div style='font-size:18px;'><b>WIN RATE:</b> <span style='color:{"#00ff66" if win_rate>=50 else "#ff3333"};'>{win_rate}%</span></div>
         <div style='font-size:18px;'><b>TOTAL TRADES:</b> {total_trades}</div>
-        <div style='font-size:18px;'><b>DAY NET PnL:</b> <span style='color:{"#00ff66" if net_pnl>=0 else "#ff3333"}; font-size:22px; font-weight:900;'>{round(net_pnl,2)}</span></div>
+        <div style='font-size:18px;'><b>DAY NET PnL:</b> <span style='color:{"#00ff66" if net_pnl>=0 else "#ff3333"}; font-size:24px; font-weight:900;'>{round(net_pnl,2)}</span></div>
     </div>
 """, unsafe_allow_html=True)
 
@@ -151,7 +138,7 @@ with c_opt4:
     auto_refresh = st.toggle("🔄 Auto-Tick Engine", value=False)
 
 # ==============================================================================
-# 7. UNIVERSAL DATA ENGINE (MTF & SMC)
+# 7. UNIVERSAL DATA ENGINE (MTF & SMC FIX)
 # ==============================================================================
 @st.cache_data(ttl=60)
 def fetch_omni_data(ticker):
@@ -159,10 +146,13 @@ def fetch_omni_data(ticker):
         df_1m = yf.download(ticker, period='3d', interval='1m', progress=False)
         df_1h = yf.download(ticker, period='1mo', interval='1h', progress=False)
         df_1d = yf.download(ticker, period='3mo', interval='1d', progress=False)
-        if isinstance(df_1m.columns, pd.MultiIndex): 
-            df_1m.columns = df_1m.columns.get_level_values(0)
-            df_1h.columns = df_1h.columns.get_level_values(0)
-            df_1d.columns = df_1d.columns.get_level_values(0)
+        
+        # ⚠️ FIX: Remove Timezones to fix Plotly chart gaps!
+        for df in [df_1m, df_1h, df_1d]:
+            if df is not None and not df.empty:
+                if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+                if df.index.tz is not None: df.index = df.index.tz_localize(None)
+                
         return df_1m, df_1h, df_1d
     except: return None, None, None
 
@@ -173,7 +163,6 @@ curr_p = st.session_state.ws_ltp if (st.session_state.ws_ltp > 0 and asset_data[
 
 fvg_list = []
 safe_sl_pts = 20.0; vwap_val = curr_p; ema_1m = curr_p; pdh = curr_p; pdl = curr_p
-vol_anomaly = False
 
 if df_1m is not None and not df_1m.empty:
     try:
@@ -206,16 +195,15 @@ if df_1d is not None and not df_1d.empty:
     except: pass
 
 # ==============================================================================
-# 8. LIVE PRICE FLASH & AI RATIONALE
+# 8. BIG LIVE PRICE & AI RATIONALE
 # ==============================================================================
-# 🔥 BIG LIVE PRICE RESTORED!
 st.markdown(f"<div class='metric-box'><div style='text-align:center; color:#8b949e; font-weight:bold;'>LIVE SPOT ({selected_asset})</div><div class='live-price-text'>₹ {curr_p}</div></div><br>", unsafe_allow_html=True)
 
 bias_1d = "🟩 Bullish" if df_1d is not None and curr_p > df_1d['Close'].ewm(span=20).mean().iloc[-1] else "🟥 Bearish"
 bias_1h = "🟩 Bullish" if df_1h is not None and curr_p > df_1h['Close'].ewm(span=50).mean().iloc[-1] else "🟥 Bearish"
 bias_1m = "🟩 Bullish" if curr_p > vwap_val else "🟥 Bearish"
 
-st.markdown(f"<div style='text-align:center; padding:10px; background:{box_bg}; border-radius:5px; border:1px solid {border_col}; margin-bottom:15px;'><b>MTF CONFLUENCE:</b> 1D [{bias_1d}] &nbsp;|&nbsp; 1H [{bias_1h}] &nbsp;|&nbsp; 1m [{bias_1m}]</div>", unsafe_allow_html=True)
+st.markdown(f"<div style='text-align:center; padding:10px; background:#1e222d; color:white; border-radius:5px; border:1px solid #444; margin-bottom:15px;'><b>MTF CONFLUENCE:</b> 1D [{bias_1d}] &nbsp;|&nbsp; 1H [{bias_1h}] &nbsp;|&nbsp; 1m [{bias_1m}]</div>", unsafe_allow_html=True)
 
 rationale = []
 can_ce, can_pe = False, False
@@ -227,7 +215,7 @@ else: bias, color = "LIQUIDITY CHOP (WAIT)", "#ffaa00"; rationale.append("🛑 <
 col_log, col_exec = st.columns([1, 1])
 with col_log: st.markdown(f"<div class='metric-box'><h3 style='color:#00ffff; margin-top:0;'>🧠 SMC AI Logic</h3>{'<br>'.join(rationale)}</div>", unsafe_allow_html=True)
 with col_exec:
-    st.markdown(f"<div class='metric-box' style='text-align:center;'><b>MASTER BIAS</b><br><span style='color:{color}; font-size:22px; font-weight:800;'>{bias}</span></div><br>", unsafe_allow_html=True)
+    st.markdown(f"<div class='metric-box' style='text-align:center;'><b>MASTER BIAS</b><br><span style='color:{color}; font-size:24px; font-weight:800;'>{bias}</span></div><br>", unsafe_allow_html=True)
     
     trade_sym = asset_data['ticker'] if is_crypto else f"{selected_asset[:5]}{expiry_date}C{int(round(curr_p/50)*50)}"
     trade_sym_pe = asset_data['ticker'] if is_crypto else f"{selected_asset[:5]}{expiry_date}P{int(round(curr_p/50)*50)}"
@@ -245,7 +233,7 @@ with col_exec:
             st.rerun()
 
 # ==============================================================================
-# 9. ACTIVE TRADE PANEL
+# 9. ACTIVE TRADE PANEL (COLORFUL ENTRY/EXIT)
 # ==============================================================================
 if st.session_state.trade_active:
     t = st.session_state.trade_details
@@ -256,18 +244,19 @@ if st.session_state.trade_active:
     st.markdown(f"""
     <div class='live-pnl-box'>
         <div style='display:flex; justify-content:space-between; align-items:center;'>
-            <div><b>● {t['Status']} {t['Type']}</b> | {t['Sym']} <br> <span style='color:#8b949e;'>Entry: {t['Entry']} | Trail SL: {round(trail_sl,2)}</span></div>
-            <div style='text-align:right;'><span style='color:#8b949e;'>Live Spot PnL</span><br><b style='color:{pcol}; font-size:36px;'>{'+' if live_points>0 else ''}{live_points}</b></div>
+            <div><b>● {t['Status']} {t['Type']}</b> | {t['Sym']} <br> 
+            <span style='color:#8b949e; font-size: 18px;'>Entry Spot: <b style='color:#00ffff;'>₹ {t['Entry']}</b> | Trail SL: <b style='color:#ffaa00;'>₹ {round(trail_sl,2)}</b></span></div>
+            <div style='text-align:right;'><span style='color:#8b949e;'>Live Spot PnL</span><br><b style='color:{pcol}; font-size:40px;'>{'+' if live_points>0 else ''}{live_points}</b></div>
         </div>
     </div>""", unsafe_allow_html=True)
     
     if st.button("🛑 SQUARE-OFF TRADE", use_container_width=True):
-        st.session_state.trade_history.append({"Date": datetime.datetime.now().strftime("%Y-%m-%d"), "Time": datetime.datetime.now().strftime("%H:%M:%S"), "Asset": selected_asset, "Type": t['Type'], "Entry": t['Entry'], "Exit": curr_p, "PnL": live_points, "Mode": t['Status']})
+        st.session_state.trade_history.append({"Date": datetime.datetime.now().strftime("%Y-%m-%d"), "Time": datetime.datetime.now().strftime("%H:%M:%S"), "Asset": selected_asset, "Type": t['Type'], "Entry Spot": t['Entry'], "Exit Spot": curr_p, "PnL": live_points, "Mode": t['Status']})
         st.session_state.trade_active = False; st.session_state.trade_details = {}
         st.rerun()
 
 # ==============================================================================
-# 10. VISUAL CHART FIX (GAPS REMOVED)
+# 10. VISUAL CHART FIX (100% NO GAPS)
 # ==============================================================================
 st.markdown("### 📊 SMC Master Chart")
 if df_1m is not None and not df_1m.empty:
@@ -286,23 +275,25 @@ if df_1m is not None and not df_1m.empty:
         fig.add_hline(y=pdl, line_dash="dot", line_color="#00ff66", annotation_text="PDL Liquidity")
         if st.session_state.trade_active: fig.add_hline(y=st.session_state.trade_details['Entry'], line_dash="solid", line_color="#00ffff", annotation_text="ENTRY")
         
-        # 🔥 FIX: Remove Weekend and Night Gaps from Chart
+        # 🔥 MAGIC FIX: Rangebreaks to skip nights and weekends seamlessly
         fig.update_xaxes(rangebreaks=[dict(bounds=["15:30", "09:15"]), dict(bounds=["sat", "mon"])])
         
-        fig.update_layout(template=chart_template, height=550, margin=dict(l=0,r=0,t=0,b=0), xaxis=dict(showgrid=False), yaxis=dict(gridcolor=border_col))
-        
-        # 🔥 FIX: Theme=None ensures Plotly uses our template, not Streamlit's default override
+        fig.update_layout(template="plotly_dark", height=550, margin=dict(l=0,r=0,t=0,b=0), xaxis=dict(showgrid=False), yaxis=dict(gridcolor="#333"), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
         st.plotly_chart(fig, use_container_width=True, theme=None)
     except: pass
 
 # ==============================================================================
-# 11. TRADE BOOK
+# 11. TRADE BOOK (COLORFUL EXITS/ENTRIES)
 # ==============================================================================
-st.markdown("<hr style='border-color:#2d3748;'>", unsafe_allow_html=True)
+st.markdown("<hr style='border-color:#444;'>", unsafe_allow_html=True)
 if len(st.session_state.trade_history) > 0:
     history_df = pd.DataFrame(st.session_state.trade_history)
-    def style_pnl(val): return f"color: {'#00ff66' if val > 0 else '#ff3333' if val < 0 else text_color}; font-weight: bold;"
-    st.dataframe(history_df.style.map(style_pnl, subset=['PnL']), use_container_width=True, hide_index=True)
+    
+    def style_pnl(val): return f"color: {'#00ff66' if val > 0 else '#ff3333' if val < 0 else '#ffffff'}; font-weight: bold;"
+    def style_entry(val): return "color: #00ffff; font-weight: bold;" # Cyan
+    def style_exit(val): return "color: #ffaa00; font-weight: bold;"  # Orange
+
+    st.dataframe(history_df.style.map(style_pnl, subset=['PnL']).map(style_entry, subset=['Entry Spot']).map(style_exit, subset=['Exit Spot']), use_container_width=True, hide_index=True)
 else:
     st.info("No trades executed yet. Data will be saved in app memory.")
 

@@ -11,7 +11,7 @@ import threading
 import websocket  
 
 # ==============================================================================
-# 1. 🔑 SHOONYA API CREDENTIALS 
+# 1. 🔑 SHOONYA API CREDENTIALS (⚠️ यहाँ अपनी असली डिटेल्स डालें ⚠️)
 # ==============================================================================
 SHOONYA_UID = "FN209492" 
 SHOONYA_PWD = "Rahul@1995" 
@@ -23,15 +23,15 @@ SHOONYA_TOTP_SECRET = "7S4S46UM2426XWQZ5726OO6QIXD6LYNT"
 # 2. ASSET CONFIGURATION & TIMEZONE FIX
 # ==============================================================================
 import os
-os.environ['TZ'] = 'Asia/Kolkata' # Force IST Timezone
+os.environ['TZ'] = 'Asia/Kolkata' 
 try: time.tzset()
-except: pass # For Windows compatibility
+except: pass 
 
 def get_ist_now():
     return datetime.datetime.utcnow() + datetime.timedelta(hours=5, minutes=30)
 
 ASSET_MAP = {
-    "NIFTY 50": {"ticker": "^NSEI", "lot": 25, "exch": "NFO", "ws_token": "NSE|26000", "tg_pts": 50}, # Target logic
+    "NIFTY 50": {"ticker": "^NSEI", "lot": 25, "exch": "NFO", "ws_token": "NSE|26000", "tg_pts": 50}, 
     "BANKNIFTY": {"ticker": "^NSEBANK", "lot": 15, "exch": "NFO", "ws_token": "NSE|26009", "tg_pts": 100},
     "GOLD (Global)": {"ticker": "GC=F", "lot": 1, "exch": "MCX", "ws_token": None, "tg_pts": 10}, 
     "BITCOIN (Crypto)": {"ticker": "BTC-USD", "lot": 1, "exch": "CRYPTO", "ws_token": None, "tg_pts": 500} 
@@ -39,7 +39,7 @@ ASSET_MAP = {
 
 SWING_STOCKS = ["RELIANCE.NS", "TATAMOTORS.NS", "SBIN.NS", "HAL.NS", "HDFC.NS", "INFY.NS", "TCS.NS", "ICICIBANK.NS", "ZOMATO.NS", "BHEL.NS", "M&M.NS", "SUNPHARMA.NS"]
 
-st.set_page_config(page_title="QuantScalper AI v44.0", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="QuantScalper AI v45.0", layout="wide", initial_sidebar_state="collapsed")
 
 if 'ws_ltp' not in st.session_state: st.session_state.ws_ltp = 0.0
 if 'ws_status' not in st.session_state: st.session_state.ws_status = "Waiting for API..."
@@ -92,21 +92,41 @@ if 'shoonya_token' not in st.session_state:
     start_shoonya_websocket()
 
 # ==============================================================================
-# 4. CUSTOM STYLING (MASSIVE FONTS)
+# 4. CUSTOM STYLING (GIANT FONTS)
 # ==============================================================================
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap');
+    
+    /* Global Background and Text */
     html, body, [class*="css"] { font-family: 'Inter', sans-serif; background-color: #0b0e11 !important; color: #e3e9f0 !important; }
     .stApp { background-color: #0b0e11 !important; }
-    .metric-box { background: #151a22; padding: 15px; border-radius: 10px; border: 1px solid #2d3748; color: #e3e9f0; box-shadow: 0 4px 6px rgba(0,0,0,0.3);}
-    .live-pnl-box { background: rgba(0, 255, 255, 0.05); border: 2px solid #00ffff; padding: 25px; border-radius: 15px; margin-top: 10px; color: white; box-shadow: 0px 0px 20px rgba(0,255,255,0.1);}
-    .performance-bar { background: linear-gradient(90deg, #151a22 0%, #1e2532 100%); padding: 15px; border-radius: 8px; margin-bottom: 15px; color:#fff; display:flex; justify-content:space-around; align-items:center; border: 1px solid #2d3748;}
-    .live-price-text { font-size: 55px; font-weight: 900; color: #00ffff; text-align: center; margin: 5px 0; text-shadow: 0px 0px 15px rgba(0,255,255,0.3); }
-    .massive-target { font-size: 38px; font-weight: 900; color: #00ff66; text-shadow: 0px 0px 10px rgba(0,255,102,0.4); }
-    .massive-entry { font-size: 32px; font-weight: 800; color: #00ffff; }
-    .massive-sl { font-size: 32px; font-weight: 800; color: #ff3333; }
-    .stSelectbox > div > div, .stNumberInput > div > div, .stTextInput > div > div { background-color: #1a202c !important; color: white !important; border: 1px solid #2d3748 !important; }
+    
+    /* Streamlit Native Element Overrides for MASSIVE Size */
+    p, div, span, label { font-size: 18px !important; }
+    .stSelectbox label, .stNumberInput label, .stTextInput label, .stToggle label { 
+        font-size: 22px !important; font-weight: 800 !important; color: #00ffff !important; 
+    }
+    .stSelectbox > div > div, .stNumberInput > div > div, .stTextInput > div > div { 
+        background-color: #1a202c !important; color: white !important; border: 2px solid #2d3748 !important; font-size: 20px !important; height: 50px !important;
+    }
+    
+    /* Giant Execution Buttons */
+    .stButton>button { 
+        font-size: 26px !important; font-weight: 900 !important; height: 60px !important; border-radius: 10px !important; border: 2px solid #333 !important;
+    }
+    
+    /* Custom Metric Boxes */
+    .metric-box { background: #151a22; padding: 25px; border-radius: 12px; border: 2px solid #2d3748; color: #e3e9f0; box-shadow: 0 4px 6px rgba(0,0,0,0.5);}
+    .live-pnl-box { background: rgba(0, 255, 255, 0.05); border: 3px solid #00ffff; padding: 30px; border-radius: 15px; margin-top: 15px; color: white; box-shadow: 0px 0px 30px rgba(0,255,255,0.15);}
+    .performance-bar { background: linear-gradient(90deg, #151a22 0%, #1e2532 100%); padding: 20px; border-radius: 10px; margin-bottom: 20px; color:#fff; display:flex; justify-content:space-around; align-items:center; border: 2px solid #2d3748;}
+    
+    /* Typography specific */
+    .live-price-text { font-size: 70px; font-weight: 900; color: #00ffff; text-align: center; margin: 10px 0; text-shadow: 0px 0px 20px rgba(0,255,255,0.4); }
+    .massive-target { font-size: 45px; font-weight: 900; color: #00ff66; text-shadow: 0px 0px 15px rgba(0,255,102,0.4); }
+    .massive-entry { font-size: 40px; font-weight: 800; color: #00ffff; }
+    .massive-sl { font-size: 40px; font-weight: 800; color: #ff3333; }
+    .ai-logic-text { font-size: 22px; line-height: 1.6; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -120,14 +140,14 @@ win_rate = round((wins / total_trades) * 100, 1) if total_trades > 0 else 0.0
 net_pnl = sum([t['PnL'] for t in history]) if total_trades > 0 else 0
 
 st.markdown(f"""
-    <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom: 10px;'>
-        <h1 style='margin:0; font-weight: 900; color:#e3e9f0;'>QUANT<span style='color:#deff9a;'>SCALPER AI</span> v44.0</h1>
-        <div style='background:#1a202c; padding:8px 15px; border-radius:20px; font-weight:bold; color: #e3e9f0; border: 1px solid #2d3748;'>📡 API Status: {st.session_state.ws_status}</div>
+    <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom: 15px;'>
+        <h1 style='margin:0; font-weight: 900; font-size:45px; color:#e3e9f0;'>QUANT<span style='color:#deff9a;'>SCALPER AI</span> v45.0</h1>
+        <div style='background:#1a202c; padding:12px 25px; border-radius:30px; font-weight:900; font-size: 22px; color: #e3e9f0; border: 2px solid #2d3748;'>📡 API Status: {st.session_state.ws_status}</div>
     </div>
     <div class='performance-bar'>
-        <div style='font-size:20px;'><b>WIN RATE:</b> <span style='color:{"#00ff66" if win_rate>=50 else "#ff3333"};'>{win_rate}%</span></div>
-        <div style='font-size:20px;'><b>TOTAL TRADES:</b> {total_trades}</div>
-        <div style='font-size:20px;'><b>DAY NET PnL:</b> <span style='color:{"#00ff66" if net_pnl>=0 else "#ff3333"}; font-size:26px; font-weight:900;'>{round(net_pnl,2)}</span></div>
+        <div style='font-size:26px;'><b>WIN RATE:</b> <span style='color:{"#00ff66" if win_rate>=50 else "#ff3333"};'>{win_rate}%</span></div>
+        <div style='font-size:26px;'><b>TOTAL TRADES:</b> {total_trades}</div>
+        <div style='font-size:26px;'><b>DAY NET PnL:</b> <span style='color:{"#00ff66" if net_pnl>=0 else "#ff3333"}; font-size:34px; font-weight:900;'>{round(net_pnl,2)}</span></div>
     </div>
 """, unsafe_allow_html=True)
 
@@ -149,6 +169,7 @@ if selected_asset != st.session_state.prev_asset:
 with c_opt2: expiry_date = st.text_input("Options Expiry", value="28MAY26" if not is_crypto else "N/A", disabled=is_crypto) 
 with c_opt3: trade_qty = st.number_input(f"Qty (Auto-Lot)", min_value=asset_data['lot'], step=asset_data['lot'], value=asset_data['lot'])
 with c_opt4: 
+    st.markdown("<br>", unsafe_allow_html=True)
     live_mode = st.toggle("🔴 LIVE TRADING", value=False, disabled=is_crypto)
     auto_refresh = st.toggle("🔄 Auto-Tick Engine", value=False)
 
@@ -217,13 +238,13 @@ if df_1d is not None and not df_1d.empty:
 # ==============================================================================
 # 8. BIG LIVE PRICE & AI RATIONALE
 # ==============================================================================
-st.markdown(f"<div class='metric-box'><div style='text-align:center; color:#8b949e; font-weight:bold; font-size:18px;'>LIVE SPOT ({selected_asset})</div><div class='live-price-text'>₹ {curr_p}</div></div><br>", unsafe_allow_html=True)
+st.markdown(f"<div class='metric-box'><div style='text-align:center; color:#8b949e; font-weight:bold; font-size:24px;'>LIVE SPOT ({selected_asset})</div><div class='live-price-text'>₹ {curr_p}</div></div><br>", unsafe_allow_html=True)
 
 bias_1d = "🟩 Bullish" if df_1d is not None and curr_p > df_1d['Close'].ewm(span=20).mean().iloc[-1] else "🟥 Bearish"
 bias_1h = "🟩 Bullish" if df_1h is not None and curr_p > df_1h['Close'].ewm(span=50).mean().iloc[-1] else "🟥 Bearish"
 bias_1m = "🟩 Bullish" if curr_p > vwap_val else "🟥 Bearish"
 
-st.markdown(f"<div style='text-align:center; padding:10px; background:#1e2532; color:#e3e9f0; border-radius:5px; border:1px solid #2d3748; margin-bottom:15px; font-size:18px;'><b>MTF CONFLUENCE:</b> 1D [{bias_1d}] &nbsp;|&nbsp; 1H [{bias_1h}] &nbsp;|&nbsp; 1m [{bias_1m}]</div>", unsafe_allow_html=True)
+st.markdown(f"<div style='text-align:center; padding:15px; background:#1e2532; color:#e3e9f0; border-radius:8px; border:2px solid #2d3748; margin-bottom:20px; font-size:24px; font-weight:bold;'>MTF CONFLUENCE: 1D [{bias_1d}] &nbsp;|&nbsp; 1H [{bias_1h}] &nbsp;|&nbsp; 1m [{bias_1m}]</div>", unsafe_allow_html=True)
 
 rationale = []
 can_ce, can_pe = False, False
@@ -236,9 +257,9 @@ elif curr_p < ema_1m and curr_p < vwap_val and not vol_anomaly: bias, color, can
 else: bias, color = "LIQUIDITY CHOP (WAIT)", "#ffaa00"; rationale.append("🛑 <b>Execution:</b> Trapping zone. Stay Out.")
 
 col_log, col_exec = st.columns([1, 1])
-with col_log: st.markdown(f"<div class='metric-box'><h3 style='color:#00ffff; margin-top:0;'>🧠 SMC AI Logic</h3>{'<br>'.join(rationale)}</div>", unsafe_allow_html=True)
+with col_log: st.markdown(f"<div class='metric-box'><h3 style='color:#00ffff; margin-top:0; font-size:30px;'>🧠 SMC AI Logic</h3><div class='ai-logic-text'>{'<br>'.join(rationale)}</div></div>", unsafe_allow_html=True)
 with col_exec:
-    st.markdown(f"<div class='metric-box' style='text-align:center;'><b>MASTER BIAS</b><br><span style='color:{color}; font-size:28px; font-weight:900;'>{bias}</span></div><br>", unsafe_allow_html=True)
+    st.markdown(f"<div class='metric-box' style='text-align:center;'><b>MASTER BIAS</b><br><span style='color:{color}; font-size:42px; font-weight:900;'>{bias}</span></div><br>", unsafe_allow_html=True)
     
     trade_sym = asset_data['ticker'] if is_crypto else f"{selected_asset[:5]}{expiry_date}C{int(round(curr_p/50)*50)}"
     trade_sym_pe = asset_data['ticker'] if is_crypto else f"{selected_asset[:5]}{expiry_date}P{int(round(curr_p/50)*50)}"
@@ -270,17 +291,17 @@ if st.session_state.trade_active:
     <div class='live-pnl-box'>
         <div style='display:flex; justify-content:space-between; align-items:center;'>
             <div style='width: 60%;'>
-                <h2 style='margin:0; color:#e3e9f0;'>{t['Status']} {t['Type']} | {t['Sym']}</h2>
-                <hr style='border-color:#2d3748; margin: 10px 0;'>
+                <h2 style='margin:0; color:#e3e9f0; font-size: 35px;'>{t['Status']} {t['Type']} | {t['Sym']}</h2>
+                <hr style='border-color:#2d3748; margin: 15px 0;'>
                 <div style='display:flex; justify-content:space-between;'>
-                    <div><span style='color:#8b949e; font-size:18px;'>ENTRY SPOT</span><br><span class='massive-entry'>₹ {t['Entry']}</span></div>
-                    <div><span style='color:#8b949e; font-size:18px;'>TARGET</span><br><span class='massive-target'>₹ {t['Target']}</span></div>
-                    <div><span style='color:#8b949e; font-size:18px;'>TRAIL SL</span><br><span class='massive-sl'>₹ {round(trail_sl,2)}</span></div>
+                    <div><span style='color:#8b949e; font-size:22px; font-weight:bold;'>ENTRY SPOT</span><br><span class='massive-entry'>₹ {t['Entry']}</span></div>
+                    <div><span style='color:#8b949e; font-size:22px; font-weight:bold;'>TARGET</span><br><span class='massive-target'>₹ {t['Target']}</span></div>
+                    <div><span style='color:#8b949e; font-size:22px; font-weight:bold;'>TRAIL SL</span><br><span class='massive-sl'>₹ {round(trail_sl,2)}</span></div>
                 </div>
             </div>
             <div style='text-align:right; width: 35%;'>
-                <span style='color:#8b949e; font-size:20px;'>LIVE PnL (Points)</span><br>
-                <b style='color:{pcol}; font-size:65px; font-weight:900;'>{'+' if live_points>0 else ''}{live_points}</b>
+                <span style='color:#8b949e; font-size:26px; font-weight:bold;'>LIVE PnL (Points)</span><br>
+                <b style='color:{pcol}; font-size:85px; font-weight:900;'>{'+' if live_points>0 else ''}{live_points}</b>
             </div>
         </div>
     </div>""", unsafe_allow_html=True)
@@ -292,9 +313,9 @@ if st.session_state.trade_active:
         st.rerun()
 
 # ==============================================================================
-# 10. VISUAL CHART (Y-AXIS FIX)
+# 10. VISUAL CHART
 # ==============================================================================
-st.markdown("### 📊 SMC Master Chart")
+st.markdown("<h3 style='font-size: 32px;'>📊 SMC Master Chart</h3>", unsafe_allow_html=True)
 if df_1m is not None and not df_1m.empty:
     try:
         plot_df = df_1m.tail(150).copy()
@@ -314,16 +335,16 @@ if df_1m is not None and not df_1m.empty:
         y_max = plot_df['High'].max()
         y_buffer = (y_max - y_min) * 0.4 if (y_max - y_min) > 0 else y_min * 0.001
         
-        fig.update_layout(template="plotly_dark", height=550, margin=dict(l=0,r=0,t=0,b=0), xaxis=dict(showgrid=False, type='category', categoryorder='category ascending', nticks=10), yaxis=dict(gridcolor="#2d3748", range=[y_min - y_buffer, y_max + y_buffer]), paper_bgcolor="#0b0e11", plot_bgcolor="#0b0e11")
+        fig.update_layout(template="plotly_dark", height=600, margin=dict(l=0,r=0,t=0,b=0), xaxis=dict(showgrid=False, type='category', categoryorder='category ascending', nticks=10, tickfont=dict(size=14)), yaxis=dict(gridcolor="#2d3748", range=[y_min - y_buffer, y_max + y_buffer], tickfont=dict(size=16)), paper_bgcolor="#0b0e11", plot_bgcolor="#0b0e11")
         st.plotly_chart(fig, use_container_width=True, theme=None)
     except: pass
 
 # ==============================================================================
-# 11. 🚀 10% SWING STOCK FINDER (NEW)
+# 11. 🚀 10% SWING STOCK FINDER 
 # ==============================================================================
 st.markdown("<hr style='border-color:#2d3748;'>", unsafe_allow_html=True)
-with st.expander("🚀 SCALPER 10% SWING FINDER (Next 2-3 Days Momentum)"):
-    st.markdown("### Operator Breakout Scanner")
+with st.expander("🚀 SCALPER 10% SWING FINDER (Next 2-3 Days Momentum)", expanded=True):
+    st.markdown("<h3 style='font-size: 28px;'>Operator Breakout Scanner</h3>", unsafe_allow_html=True)
     if st.button("🔍 Scan Top High-Beta Stocks", use_container_width=True):
         with st.spinner("Scanning Market for Institutional Buying..."):
             found_stocks = []
@@ -337,33 +358,32 @@ with st.expander("🚀 SCALPER 10% SWING FINDER (Next 2-3 Days Momentum)"):
                         avg_vol = sdf['Volume'].tail(10).mean()
                         curr_vol = float(sdf['Volume'].iloc[-1])
                         
-                        # Logic: Price Up + Volume > 1.5x Avg (Operator Entry)
                         if curr_c > prev_c and curr_vol > (avg_vol * 1.5):
-                            target = round(curr_c * 1.10, 2) # 10% Target
-                            sl = round(curr_c * 0.95, 2)     # 5% SL
+                            target = round(curr_c * 1.10, 2) 
+                            sl = round(curr_c * 0.95, 2)     
                             found_stocks.append({"Stock": sym.replace(".NS", ""), "Entry Price": round(curr_c, 2), "Target (10%)": f"₹ {target}", "Stop Loss": f"₹ {sl}", "Status": "🔥 BREAKOUT"})
                 except: pass
             
             if found_stocks:
                 scan_df = pd.DataFrame(found_stocks)
-                def highlight_target(val): return 'color: #00ff66; font-weight: 900;'
-                def highlight_sl(val): return 'color: #ff3333; font-weight: 800;'
-                def highlight_entry(val): return 'color: #00ffff; font-weight: 800;'
+                def highlight_target(val): return 'color: #00ff66; font-weight: 900; font-size: 20px;'
+                def highlight_sl(val): return 'color: #ff3333; font-weight: 800; font-size: 18px;'
+                def highlight_entry(val): return 'color: #00ffff; font-weight: 800; font-size: 18px;'
                 
                 st.dataframe(scan_df.style.map(highlight_target, subset=['Target (10%)']).map(highlight_sl, subset=['Stop Loss']).map(highlight_entry, subset=['Entry Price']), use_container_width=True, hide_index=True)
             else:
-                st.info("No 10% momentum setups found today. Market is resting.")
+                st.warning("No 10% momentum setups found right now. Operators are quiet.")
 
 # ==============================================================================
 # 12. TRADE BOOK 
 # ==============================================================================
 st.markdown("<hr style='border-color:#2d3748;'>", unsafe_allow_html=True)
 if len(st.session_state.trade_history) > 0:
-    st.markdown("### 📓 SECURE TRADE BOOK")
+    st.markdown("<h3 style='font-size: 28px;'>📓 SECURE TRADE BOOK</h3>", unsafe_allow_html=True)
     history_df = pd.DataFrame(st.session_state.trade_history)
-    def style_pnl(val): return f"color: {'#00ff66' if val > 0 else '#ff3333' if val < 0 else '#ffffff'}; font-weight: bold;"
-    def style_entry(val): return "color: #00ffff; font-weight: bold;" 
-    def style_exit(val): return "color: #ffaa00; font-weight: bold;"  
+    def style_pnl(val): return f"color: {'#00ff66' if val > 0 else '#ff3333' if val < 0 else '#ffffff'}; font-weight: bold; font-size: 18px;"
+    def style_entry(val): return "color: #00ffff; font-weight: bold; font-size: 18px;" 
+    def style_exit(val): return "color: #ffaa00; font-weight: bold; font-size: 18px;"  
     st.dataframe(history_df.style.map(style_pnl, subset=['PnL']).map(style_entry, subset=['Entry Spot']).map(style_exit, subset=['Exit Spot']), use_container_width=True, hide_index=True)
 
 if auto_refresh: time.sleep(2); st.rerun()
